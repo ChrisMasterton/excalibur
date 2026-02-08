@@ -3,10 +3,14 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{async_runtime::channel, AppHandle, Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::DialogExt;
+
+/// Holds the file path from startup (e.g. double-click in Finder) until the frontend is ready.
+struct PendingFile(Mutex<Option<String>>);
 
 #[derive(Serialize, Deserialize, Clone)]
 struct RecentItem {
@@ -306,6 +310,15 @@ async fn save_mermaid_file(
     Ok(SaveFileResponse { path: path_string })
 }
 
+/// Returns (and clears) the file path that was pending from app startup.
+#[tauri::command]
+fn take_pending_file(app: AppHandle) -> Option<String> {
+    let state = app.state::<PendingFile>();
+    let path = state.0.lock().unwrap().take();
+    eprintln!("[excalibur] take_pending_file: {:?}", path);
+    path
+}
+
 fn file_path_from_url(url: &url::Url) -> Option<String> {
     url.to_file_path()
         .ok()
@@ -316,6 +329,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
+        .manage(PendingFile(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             list_recents,
             open_excalidraw_file,
@@ -323,22 +337,26 @@ fn main() {
             save_excalidraw_file,
             open_mermaid_file,
             load_mermaid_path,
-            save_mermaid_file
+            save_mermaid_file,
+            take_pending_file
         ])
         .setup(|app| {
-            // Check for a file opened at launch (e.g. double-click in Finder)
+            // Check for a file opened at launch (e.g. double-click in Finder).
+            // Store it in state so the frontend can retrieve it when ready.
             if let Ok(Some(urls)) = app.deep_link().get_current() {
                 eprintln!("[excalibur] deep_link startup URLs: {:?}", urls);
                 for url in &urls {
                     if let Some(path) = file_path_from_url(url) {
-                        eprintln!("[excalibur] emitting open-file for startup path: {}", path);
-                        let _ = app.emit("open-file", path);
+                        eprintln!("[excalibur] storing pending file for startup: {}", path);
+                        let state = app.state::<PendingFile>();
+                        *state.0.lock().unwrap() = Some(path);
                         break;
                     }
                 }
             }
 
-            // Listen for files opened while the app is already running
+            // Listen for files opened while the app is already running.
+            // At this point the frontend is loaded, so emitting an event is fine.
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 let urls = event.urls();

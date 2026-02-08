@@ -261,13 +261,25 @@ function App() {
     }
   }, [excalidrawApi, loadExcalidrawPath])
 
-  // When excalidrawApi becomes available, load any pending file
+  // When excalidrawApi becomes available, load any pending file (from event or startup)
   useEffect(() => {
-    if (excalidrawApi && pendingOpenFile.current) {
+    if (!excalidrawApi) return
+
+    // Check for a file path queued from an event that arrived before the API was ready
+    if (pendingOpenFile.current) {
       const path = pendingOpenFile.current
       pendingOpenFile.current = null
       loadExcalidrawPath(path)
+      return
     }
+
+    // Check for a file path stored by the backend at startup (e.g. double-click in Finder)
+    invoke<string | null>('take_pending_file').then((path) => {
+      if (path) {
+        console.log('[excalibur] take_pending_file returned:', path)
+        loadExcalidrawPath(path)
+      }
+    })
   }, [excalidrawApi, loadExcalidrawPath])
 
   const handleOpenMermaid = useCallback(async () => {
