@@ -137,8 +137,18 @@
 }
 
 .status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
   font-size: 13px;
   color: rgba(13, 15, 18, 0.6);
+}
+
+.status-note {
+  font-size: 12px;
+  color: #0d7a46;
+  font-weight: 600;
 }
 
 .control-row {
@@ -186,6 +196,11 @@
 .actions button.primary {
   background: #f7c36f;
   color: #1b1b1b;
+}
+
+.actions button.recover {
+  background: #d7f3e5;
+  color: #0d4f30;
 }
 
 .actions button:hover {
@@ -253,6 +268,10 @@
 
   .panel-header {
     flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .status {
     align-items: flex-start;
   }
 

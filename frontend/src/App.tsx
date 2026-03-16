@@ -1,10 +1,52 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ComponentProps, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Excalidraw, serializeAsJSON } from '@excalidraw/excalidraw'
-import type { BinaryFileData, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
+import type {
+  BinaryFileData,
+  ExcalidrawImperativeAPI,
+} from '@excalidraw/excalidraw/types'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import mermaid from 'mermaid'
 import './App.css'
+
+type MermaidHistoryState = {
+  text: string
+  past: string[]
+  future: string[]
+}
+
+type MermaidHistoryAction =
+  | { type: 'set'; text: string }
+  | { type: 'undo' }
+  | { type: 'redo' }
+  | { type: 'reset'; text: string }
+
+function mermaidHistoryReducer(
+  state: MermaidHistoryState,
+  action: MermaidHistoryAction,
+): MermaidHistoryState {
+  switch (action.type) {
+    case 'set': {
+      const past = state.past.length >= 100 ? state.past.slice(1) : state.past
+      return { text: action.text, past: [...past, state.text], future: [] }
+    }
+    case 'undo': {
+      if (state.past.length === 0) return state
+      const previous = state.past[state.past.length - 1]
+      return { text: previous, past: state.past.slice(0, -1), future: [state.text, ...state.future] }
+    }
+    case 'redo': {
+      if (state.future.length === 0) return state
+      const next = state.future[0]
+      return { text: next, past: [...state.past, state.text], future: state.future.slice(1) }
+    }
+    case 'reset':
+      return { text: action.text, past: [], future: [] }
+    default:
+      return state
+  }
+}
 
 type ExcalidrawData = {
   elements: unknown[]
@@ -29,6 +71,77 @@ type SaveFileResponse = {
   path: string
 }
 
+type ExcalidrawAutosave = {
+  contents: string
+  path: string | null
+  name: string
+  updatedAt: number
+}
+
+type ExcalidrawSceneSnapshot = {
+  contents: string
+  hasContent: boolean
+}
+
+type ExcalidrawPersistedState = ExcalidrawSceneSnapshot & {
+  path: string | null
+  name: string
+}
+
+type MermaidPersistedState = {
+  path: string | null
+  name: string
+  text: string
+}
+
+type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>
+
+const EXCALIDRAW_AUTOSAVE_KEY = 'excalibur.excalidraw.autosave.current'
+const EXCALIDRAW_RECOVERY_KEY = 'excalibur.excalidraw.autosave.recovery'
+const INITIAL_MERMAID_TEXT = 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Ship it]\n  B -->|No| D[Refine]'
+
+function normalizeExcalidrawName(name?: string | null) {
+  return name?.replace(/\.[^/.]+$/, '') ?? ''
+}
+
+function getUnsavedChangesMessage(documentName: string, action: string) {
+  return `You have unsaved ${documentName} changes. Save them before you ${action}. Select OK to continue without saving, or Cancel to go back.`
+}
+
+function getExitUnsavedChangesMessage(
+  hasExcalidrawChanges: boolean,
+  hasMermaidChanges: boolean,
+) {
+  if (hasExcalidrawChanges && hasMermaidChanges) {
+    return 'You have unsaved changes in Excalidraw and Mermaid. Save them before you exit. Select OK to exit without saving, or Cancel to go back.'
+  }
+  if (hasExcalidrawChanges) {
+    return 'You have unsaved Excalidraw changes. Save them before you exit. Select OK to exit without saving, or Cancel to go back.'
+  }
+  return 'You have unsaved Mermaid changes. Save them before you exit. Select OK to exit without saving, or Cancel to go back.'
+}
+
+function readStoredExcalidrawAutosave(storageKey: string): ExcalidrawAutosave | null {
+  try {
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) {
+      return null
+    }
+    return JSON.parse(raw) as ExcalidrawAutosave
+  } catch {
+    window.localStorage.removeItem(storageKey)
+    return null
+  }
+}
+
+function writeStoredExcalidrawAutosave(storageKey: string, autosave: ExcalidrawAutosave) {
+  window.localStorage.setItem(storageKey, JSON.stringify(autosave))
+}
+
+function clearStoredExcalidrawAutosave(storageKey: string) {
+  window.localStorage.removeItem(storageKey)
+}
+
 function App() {
   const [excalidrawApi, setExcalidrawApiInternal] = useState<ExcalidrawImperativeAPI | null>(null)
   const [tab, setTab] = useState<'excalidraw' | 'mermaid'>('excalidraw')
@@ -42,10 +155,20 @@ function App() {
   const [excalidrawPath, setExcalidrawPath] = useState<string | null>(null)
   const [excalidrawName, setExcalidrawName] = useState('')
   const [excalidrawMessage, setExcalidrawMessage] = useState('')
+  const [hasUnsavedExcalidrawChanges, setHasUnsavedExcalidrawChanges] = useState(false)
+  const [recoverableAutosave, setRecoverableAutosave] = useState<ExcalidrawAutosave | null>(() =>
+    readStoredExcalidrawAutosave(EXCALIDRAW_RECOVERY_KEY),
+  )
 
   const [mermaidPath, setMermaidPath] = useState<string | null>(null)
   const [mermaidName, setMermaidName] = useState('')
-  const [mermaidText, setMermaidText] = useState('flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Ship it]\n  B -->|No| D[Refine]')
+  const [hasUnsavedMermaidChanges, setHasUnsavedMermaidChanges] = useState(false)
+  const [mermaidHistory, dispatchMermaid] = useReducer(mermaidHistoryReducer, {
+    text: INITIAL_MERMAID_TEXT,
+    past: [],
+    future: [],
+  })
+  const mermaidText = mermaidHistory.text
   const [mermaidMessage, setMermaidMessage] = useState('')
   const [mermaidSvg, setMermaidSvg] = useState('')
   const [mermaidError, setMermaidError] = useState('')
@@ -61,11 +184,128 @@ function App() {
   }, [])
 
   useEffect(() => {
-    refreshRecents()
-  }, [refreshRecents])
+    let isActive = true
+    invoke<RecentItem[]>('list_recents').then((data) => {
+      if (isActive) {
+        setRecents(data)
+      }
+    })
+    return () => {
+      isActive = false
+    }
+  }, [])
 
   // Pending file path for the startup race condition (event arrives before excalidrawApi is ready)
   const pendingOpenFile = useRef<string | null>(null)
+  const excalidrawPathRef = useRef<string | null>(null)
+  const excalidrawNameRef = useRef('')
+  const excalidrawSceneSnapshotRef = useRef<ExcalidrawSceneSnapshot | null>(null)
+  const excalidrawPersistedRef = useRef<ExcalidrawPersistedState | null>(null)
+  const autosaveSnapshotRef = useRef<ExcalidrawAutosave | null>(
+    readStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY),
+  )
+  const mermaidPersistedRef = useRef<MermaidPersistedState>({
+    path: null,
+    name: '',
+    text: INITIAL_MERMAID_TEXT,
+  })
+  const hasUnsavedExcalidrawChangesRef = useRef(false)
+  const hasUnsavedMermaidChangesRef = useRef(false)
+
+  const setExcalidrawDocument = useCallback((path: string | null, name: string) => {
+    excalidrawPathRef.current = path
+    excalidrawNameRef.current = name
+    setExcalidrawPath(path)
+    setExcalidrawName(name)
+  }, [])
+
+  const setRecoverableExcalidrawAutosave = useCallback((autosave: ExcalidrawAutosave | null) => {
+    setRecoverableAutosave(autosave)
+    if (autosave) {
+      writeStoredExcalidrawAutosave(EXCALIDRAW_RECOVERY_KEY, autosave)
+      return
+    }
+    clearStoredExcalidrawAutosave(EXCALIDRAW_RECOVERY_KEY)
+  }, [])
+
+  const setCurrentExcalidrawAutosave = useCallback((autosave: ExcalidrawAutosave | null) => {
+    autosaveSnapshotRef.current = autosave
+    if (autosave) {
+      writeStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY, autosave)
+      return
+    }
+    clearStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY)
+  }, [])
+
+  const setExcalidrawPersistedState = useCallback(
+    (snapshot: ExcalidrawSceneSnapshot, path: string | null, name: string) => {
+      excalidrawPersistedRef.current = {
+        ...snapshot,
+        path,
+        name: name.trim(),
+      }
+      setHasUnsavedExcalidrawChanges(false)
+    },
+    [],
+  )
+
+  const clearExcalidrawPersistedState = useCallback(() => {
+    excalidrawPersistedRef.current = null
+    setHasUnsavedExcalidrawChanges(false)
+  }, [])
+
+  const updateExcalidrawDirtyState = useCallback(
+    (snapshot: ExcalidrawSceneSnapshot | null, name: string) => {
+      const persisted = excalidrawPersistedRef.current
+      const trimmedName = name.trim()
+
+      if (!persisted) {
+        setHasUnsavedExcalidrawChanges((snapshot?.hasContent ?? false) || trimmedName.length > 0)
+        return
+      }
+
+      setHasUnsavedExcalidrawChanges(
+        (snapshot?.contents ?? '') !== persisted.contents || trimmedName !== persisted.name,
+      )
+    },
+    [],
+  )
+
+  const setMermaidPersistedState = useCallback((text: string, name: string, path: string | null) => {
+    mermaidPersistedRef.current = {
+      text,
+      name: name.trim(),
+      path,
+    }
+    setHasUnsavedMermaidChanges(false)
+  }, [])
+
+  const updateMermaidDirtyState = useCallback((text: string, name: string, path: string | null) => {
+    const persisted = mermaidPersistedRef.current
+    setHasUnsavedMermaidChanges(
+      text !== persisted.text || name.trim() !== persisted.name || path !== persisted.path,
+    )
+  }, [])
+
+  const confirmExcalidrawAction = useCallback(
+    (action: string) => {
+      if (!hasUnsavedExcalidrawChanges) {
+        return true
+      }
+      return window.confirm(getUnsavedChangesMessage('Excalidraw', action))
+    },
+    [hasUnsavedExcalidrawChanges],
+  )
+
+  const confirmMermaidAction = useCallback(
+    (action: string) => {
+      if (!hasUnsavedMermaidChanges) {
+        return true
+      }
+      return window.confirm(getUnsavedChangesMessage('Mermaid', action))
+    },
+    [hasUnsavedMermaidChanges],
+  )
 
   useEffect(() => {
     mermaid.initialize({
@@ -74,6 +314,11 @@ function App() {
       flowchart: { htmlLabels: false },
     })
   }, [])
+
+  useEffect(() => {
+    hasUnsavedExcalidrawChangesRef.current = hasUnsavedExcalidrawChanges
+    hasUnsavedMermaidChangesRef.current = hasUnsavedMermaidChanges
+  }, [hasUnsavedExcalidrawChanges, hasUnsavedMermaidChanges])
 
   useEffect(() => {
     let isActive = true
@@ -90,7 +335,7 @@ function App() {
         if (isActive) {
           setMermaidSvg(svg)
         }
-      } catch (error) {
+      } catch {
         if (isActive) {
           setMermaidError('Unable to render diagram. Check syntax.')
         }
@@ -102,12 +347,72 @@ function App() {
     }
   }, [mermaidText])
 
-  const applyExcalidrawFile = useCallback(
-    (file: OpenFileResponse) => {
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedExcalidrawChanges && !hasUnsavedMermaidChanges) {
+        return
+      }
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [hasUnsavedExcalidrawChanges, hasUnsavedMermaidChanges])
+
+  useEffect(() => {
+    let isActive = true
+    let unlisten: (() => void) | null = null
+
+    getCurrentWindow()
+      .onCloseRequested((event) => {
+        const hasExcalidrawChanges = hasUnsavedExcalidrawChangesRef.current
+        const hasMermaidChanges = hasUnsavedMermaidChangesRef.current
+
+        if (!hasExcalidrawChanges && !hasMermaidChanges) {
+          return
+        }
+
+        if (!window.confirm(getExitUnsavedChangesMessage(hasExcalidrawChanges, hasMermaidChanges))) {
+          event.preventDefault()
+        }
+      })
+      .then((cleanup) => {
+        if (!isActive) {
+          cleanup()
+          return
+        }
+        unlisten = cleanup
+      })
+
+    return () => {
+      isActive = false
+      unlisten?.()
+    }
+  }, [])
+
+  const applyExcalidrawContents = useCallback(
+    ({
+      contents,
+      path,
+      name,
+      message,
+      markDocumentClean,
+      refreshRecentsOnSuccess,
+    }: {
+      contents: string
+      path: string | null
+      name?: string | null
+      message: string
+      markDocumentClean?: boolean
+      refreshRecentsOnSuccess?: boolean
+    }) => {
       console.log('[excalibur] applyExcalidrawFile: START', {
-        path: file.path,
-        name: file.name,
-        contentLength: file.contents?.length ?? 0,
+        path,
+        name,
+        contentLength: contents.length,
       })
 
       if (!excalidrawApi) {
@@ -118,7 +423,7 @@ function App() {
 
       try {
         console.log('[excalibur] applyExcalidrawFile: parsing JSON...')
-        const parsed = JSON.parse(file.contents) as Partial<ExcalidrawData> & {
+        const parsed = JSON.parse(contents) as Partial<ExcalidrawData> & {
           data?: Partial<ExcalidrawData>
         }
         console.log('[excalibur] applyExcalidrawFile: JSON parsed successfully', {
@@ -148,6 +453,15 @@ function App() {
           return sanitized
         })
 
+        const normalizedName = normalizeExcalidrawName(name)
+        const snapshot = {
+          contents,
+          hasContent: sanitizedElements.some((element) => element.isDeleted !== true),
+        }
+
+        excalidrawSceneSnapshotRef.current = snapshot
+        setExcalidrawDocument(path, normalizedName)
+
         console.log('[excalibur] applyExcalidrawFile: calling updateScene...')
         excalidrawApi.updateScene({
           elements: sanitizedElements as never[],
@@ -163,23 +477,87 @@ function App() {
         }
 
         console.log('[excalibur] applyExcalidrawFile: updating React state...')
-        setExcalidrawPath(file.path)
-        setExcalidrawName(file.name?.replace(/\.[^/.]+$/, '') ?? '')
-        setExcalidrawMessage(`Loaded ${file.path}.`)
+        if (snapshot.hasContent) {
+          setCurrentExcalidrawAutosave({
+            contents,
+            path,
+            name: normalizedName,
+            updatedAt: Date.now(),
+          })
+        } else {
+          setCurrentExcalidrawAutosave(null)
+        }
+        if (markDocumentClean) {
+          setExcalidrawPersistedState(snapshot, path, normalizedName)
+        } else {
+          updateExcalidrawDirtyState(snapshot, normalizedName)
+        }
+        setExcalidrawMessage(message)
         setTab('excalidraw')
-        console.log('[excalibur] applyExcalidrawFile: refreshing recents...')
-        refreshRecents()
+        if (refreshRecentsOnSuccess) {
+          console.log('[excalibur] applyExcalidrawFile: refreshing recents...')
+          refreshRecents()
+        }
         console.log('[excalibur] applyExcalidrawFile: COMPLETE SUCCESS')
       } catch (error) {
         console.error('[excalibur] applyExcalidrawFile: FAILED', error)
         setExcalidrawMessage('Failed to parse .excalidraw file.')
       }
     },
-    [excalidrawApi, refreshRecents],
+    [
+      excalidrawApi,
+      refreshRecents,
+      setCurrentExcalidrawAutosave,
+      setExcalidrawDocument,
+      setExcalidrawPersistedState,
+      updateExcalidrawDirtyState,
+    ],
+  )
+
+  const applyExcalidrawFile = useCallback(
+    (file: OpenFileResponse) => {
+      applyExcalidrawContents({
+        contents: file.contents,
+        path: file.path,
+        name: file.name,
+        message: `Loaded ${file.path}.`,
+        markDocumentClean: true,
+        refreshRecentsOnSuccess: true,
+      })
+    },
+    [applyExcalidrawContents],
+  )
+
+  const handleExcalidrawChange = useCallback(
+    (...[elements, appState, files]: Parameters<ExcalidrawChangeHandler>) => {
+      const hasContent = elements.some((element) => !element.isDeleted)
+      const snapshot = {
+        contents: serializeAsJSON(elements, appState, files, 'local'),
+        hasContent,
+      }
+
+      excalidrawSceneSnapshotRef.current = snapshot
+
+      if (!hasContent) {
+        setCurrentExcalidrawAutosave(null)
+      } else {
+        setCurrentExcalidrawAutosave({
+          contents: snapshot.contents,
+          path: excalidrawPathRef.current,
+          name: excalidrawNameRef.current.trim(),
+          updatedAt: Date.now(),
+        })
+      }
+      updateExcalidrawDirtyState(snapshot, excalidrawNameRef.current)
+    },
+    [setCurrentExcalidrawAutosave, updateExcalidrawDirtyState],
   )
 
   const handleOpenExcalidraw = useCallback(async () => {
     console.log('[excalibur] handleOpenExcalidraw: invoking open_excalidraw_file...')
+    if (!confirmExcalidrawAction('load another document')) {
+      return
+    }
     try {
       const response = await invoke<OpenFileResponse | null>('open_excalidraw_file')
       console.log('[excalibur] handleOpenExcalidraw: invoke returned', {
@@ -195,12 +573,13 @@ function App() {
     } catch (error) {
       console.error('[excalibur] handleOpenExcalidraw: invoke FAILED', error)
     }
-  }, [applyExcalidrawFile])
+  }, [applyExcalidrawFile, confirmExcalidrawAction])
 
   const handleSaveExcalidraw = useCallback(async () => {
     if (!excalidrawApi) {
       return
     }
+    const hasContent = excalidrawApi.getSceneElements().some((element) => !element.isDeleted)
     const serialized = serializeAsJSON(
       excalidrawApi.getSceneElements(),
       excalidrawApi.getAppState(),
@@ -214,23 +593,87 @@ function App() {
         contents: serialized,
       },
     })
-    setExcalidrawPath(response.path)
+    const nextName = excalidrawNameRef.current.trim()
+    const snapshot = {
+      contents: serialized,
+      hasContent,
+    }
+
+    excalidrawSceneSnapshotRef.current = snapshot
+    setExcalidrawDocument(response.path, nextName)
+    if (hasContent) {
+      setCurrentExcalidrawAutosave({
+        contents: serialized,
+        path: response.path,
+        name: nextName,
+        updatedAt: Date.now(),
+      })
+    } else {
+      setCurrentExcalidrawAutosave(null)
+    }
+    setExcalidrawPersistedState(snapshot, response.path, nextName)
     setExcalidrawMessage(`Saved to ${response.path}.`)
     refreshRecents()
-  }, [excalidrawApi, excalidrawName, excalidrawPath, refreshRecents])
+  }, [
+    excalidrawApi,
+    excalidrawName,
+    excalidrawPath,
+    refreshRecents,
+    setCurrentExcalidrawAutosave,
+    setExcalidrawDocument,
+    setExcalidrawPersistedState,
+  ])
 
   const handleNewExcalidraw = useCallback(() => {
     if (!excalidrawApi) {
       return
     }
+    if (!confirmExcalidrawAction('create a new document')) {
+      return
+    }
+    const autosave = autosaveSnapshotRef.current ?? readStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY)
+    if (autosave) {
+      setRecoverableExcalidrawAutosave(autosave)
+    }
+    excalidrawSceneSnapshotRef.current = null
+    setCurrentExcalidrawAutosave(null)
+    clearExcalidrawPersistedState()
+    setExcalidrawDocument(null, '')
     excalidrawApi.resetScene()
-    setExcalidrawPath(null)
-    setExcalidrawName('')
-    setExcalidrawMessage('')
-  }, [excalidrawApi])
+    setExcalidrawMessage(
+      autosave
+        ? 'Started a new diagram. Recover backup if that was accidental.'
+        : 'Started a new diagram.',
+    )
+  }, [
+    clearExcalidrawPersistedState,
+    confirmExcalidrawAction,
+    excalidrawApi,
+    setCurrentExcalidrawAutosave,
+    setExcalidrawDocument,
+    setRecoverableExcalidrawAutosave,
+  ])
+
+  const handleRecoverExcalidraw = useCallback(() => {
+    if (!recoverableAutosave) {
+      return
+    }
+    applyExcalidrawContents({
+      contents: recoverableAutosave.contents,
+      path: recoverableAutosave.path,
+      name: recoverableAutosave.name,
+      message: recoverableAutosave.path
+        ? `Recovered autosave backup for ${recoverableAutosave.path}.`
+        : 'Recovered autosave backup.',
+      markDocumentClean: false,
+    })
+  }, [applyExcalidrawContents, recoverableAutosave])
 
   const loadExcalidrawPath = useCallback(
     async (path: string) => {
+      if (!confirmExcalidrawAction('load another document')) {
+        return
+      }
       console.log('[excalibur] loadExcalidrawPath: invoking load_excalidraw_path for', path)
       try {
         const response = await invoke<OpenFileResponse>('load_excalidraw_path', { path })
@@ -243,7 +686,7 @@ function App() {
         console.error('[excalibur] loadExcalidrawPath: invoke FAILED', error)
       }
     },
-    [applyExcalidrawFile],
+    [applyExcalidrawFile, confirmExcalidrawAction],
   )
 
   // Listen for open-file events from the backend (file association / deep-link)
@@ -283,40 +726,82 @@ function App() {
   }, [excalidrawApi, loadExcalidrawPath])
 
   const handleOpenMermaid = useCallback(async () => {
+    if (!confirmMermaidAction('load another document')) {
+      return
+    }
     const response = await invoke<OpenFileResponse | null>('open_mermaid_file')
     if (!response) {
       return
     }
+    const nextName = response.name?.replace(/\.[^/.]+$/, '') ?? ''
     setMermaidPath(response.path)
-    setMermaidName(response.name?.replace(/\.[^/.]+$/, '') ?? '')
-    setMermaidText(response.contents)
+    setMermaidName(nextName)
+    dispatchMermaid({ type: 'reset', text: response.contents })
+    setMermaidPersistedState(response.contents, nextName, response.path)
     setMermaidMessage(`Loaded ${response.path}.`)
     setTab('mermaid')
     refreshRecents()
-  }, [refreshRecents])
+  }, [confirmMermaidAction, refreshRecents, setMermaidPersistedState])
 
   const handleSaveMermaid = useCallback(async () => {
+    const nextName = mermaidName.trim()
     const response = await invoke<SaveFileResponse>('save_mermaid_file', {
       request: {
         path: mermaidPath,
-        name: mermaidName.trim() || undefined,
+        name: nextName || undefined,
         contents: mermaidText,
       },
     })
     setMermaidPath(response.path)
+    setMermaidName(nextName)
+    setMermaidPersistedState(mermaidText, nextName, response.path)
     setMermaidMessage(`Saved to ${response.path}.`)
     refreshRecents()
-  }, [mermaidName, mermaidPath, mermaidText, refreshRecents])
+  }, [mermaidName, mermaidPath, mermaidText, refreshRecents, setMermaidPersistedState])
 
   const loadMermaidPath = useCallback(async (path: string) => {
+    if (!confirmMermaidAction('load another document')) {
+      return
+    }
     const response = await invoke<OpenFileResponse>('load_mermaid_path', { path })
+    const nextName = response.name?.replace(/\.[^/.]+$/, '') ?? ''
     setMermaidPath(response.path)
-    setMermaidName(response.name?.replace(/\.[^/.]+$/, '') ?? '')
-    setMermaidText(response.contents)
+    setMermaidName(nextName)
+    dispatchMermaid({ type: 'reset', text: response.contents })
+    setMermaidPersistedState(response.contents, nextName, response.path)
     setMermaidMessage(`Loaded ${response.path}.`)
     setTab('mermaid')
     refreshRecents()
-  }, [refreshRecents])
+  }, [confirmMermaidAction, refreshRecents, setMermaidPersistedState])
+
+  const handleMermaidKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) {
+          const nextText = mermaidHistory.future[0]
+          if (nextText !== undefined) {
+            updateMermaidDirtyState(nextText, mermaidName, mermaidPath)
+          }
+          dispatchMermaid({ type: 'redo' })
+        } else {
+          const nextText = mermaidHistory.past[mermaidHistory.past.length - 1]
+          if (nextText !== undefined) {
+            updateMermaidDirtyState(nextText, mermaidName, mermaidPath)
+          }
+          dispatchMermaid({ type: 'undo' })
+        }
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') {
+        event.preventDefault()
+        const nextText = mermaidHistory.future[0]
+        if (nextText !== undefined) {
+          updateMermaidDirtyState(nextText, mermaidName, mermaidPath)
+        }
+        dispatchMermaid({ type: 'redo' })
+      }
+    },
+    [mermaidHistory.future, mermaidHistory.past, mermaidName, mermaidPath, updateMermaidDirtyState],
+  )
 
   const recentList = useMemo(() => {
     if (!recents.length) {
@@ -376,14 +861,29 @@ function App() {
                 <h1>Excalidraw editor</h1>
                 <p>Open, edit, and save .excalidraw files.</p>
               </div>
-              <div className="status">{excalidrawMessage}</div>
+              <div className="status">
+                {excalidrawMessage}
+                {recoverableAutosave ? <span className="status-note">Autosave backup available.</span> : null}
+              </div>
             </header>
             <div className="control-row">
               <label>
                 Name
                 <input
                   value={excalidrawName}
-                  onChange={(event) => setExcalidrawName(event.target.value)}
+                  onChange={(event) => {
+                    const nextName = event.target.value
+                    excalidrawNameRef.current = nextName
+                    setExcalidrawName(nextName)
+                    updateExcalidrawDirtyState(excalidrawSceneSnapshotRef.current, nextName)
+                    if (autosaveSnapshotRef.current) {
+                      setCurrentExcalidrawAutosave({
+                        ...autosaveSnapshotRef.current,
+                        name: nextName.trim(),
+                        updatedAt: Date.now(),
+                      })
+                    }
+                  }}
                   placeholder="Architecture brainstorm"
                 />
               </label>
@@ -401,10 +901,15 @@ function App() {
                 </button>
                 <button onClick={handleOpenExcalidraw}>Open</button>
                 <button onClick={handleNewExcalidraw}>New</button>
+                {recoverableAutosave ? (
+                  <button className="recover" onClick={handleRecoverExcalidraw}>
+                    Recover backup
+                  </button>
+                ) : null}
               </div>
             </div>
             <div className="canvas-frame">
-              <Excalidraw excalidrawAPI={setExcalidrawApi} />
+              <Excalidraw excalidrawAPI={setExcalidrawApi} onChange={handleExcalidrawChange} />
             </div>
           </section>
         ) : (
@@ -421,7 +926,11 @@ function App() {
                 Name
                 <input
                   value={mermaidName}
-                  onChange={(event) => setMermaidName(event.target.value)}
+                  onChange={(event) => {
+                    const nextName = event.target.value
+                    setMermaidName(nextName)
+                    updateMermaidDirtyState(mermaidText, nextName, mermaidPath)
+                  }}
                   placeholder="Auth flow"
                 />
               </label>
@@ -440,7 +949,12 @@ function App() {
               <div className="mermaid-editor">
                 <textarea
                   value={mermaidText}
-                  onChange={(event) => setMermaidText(event.target.value)}
+                  onChange={(event) => {
+                    const nextText = event.target.value
+                    dispatchMermaid({ type: 'set', text: nextText })
+                    updateMermaidDirtyState(nextText, mermaidName, mermaidPath)
+                  }}
+                  onKeyDown={handleMermaidKeyDown}
                 />
               </div>
               <div className="mermaid-preview">
