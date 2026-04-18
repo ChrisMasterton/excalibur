@@ -1,5 +1,6 @@
 import { type ComponentProps, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { Excalidraw, serializeAsJSON } from '@excalidraw/excalidraw'
+import { Excalidraw, convertToExcalidrawElements, serializeAsJSON } from '@excalidraw/excalidraw'
+import { parseMermaidToExcalidraw } from '@excalidraw/mermaid-to-excalidraw'
 import type {
   BinaryFileData,
   ExcalidrawImperativeAPI,
@@ -96,6 +97,15 @@ type MermaidPersistedState = {
 
 type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>
 
+type ApplyExcalidrawContentsRequest = {
+  contents: string
+  path: string | null
+  name?: string | null
+  message: string
+  markDocumentClean?: boolean
+  refreshRecentsOnSuccess?: boolean
+}
+
 const EXCALIDRAW_AUTOSAVE_KEY = 'excalibur.excalidraw.autosave.current'
 const EXCALIDRAW_RECOVERY_KEY = 'excalibur.excalidraw.autosave.recovery'
 const INITIAL_MERMAID_TEXT = 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Ship it]\n  B -->|No| D[Refine]'
@@ -172,6 +182,7 @@ function App() {
   const [mermaidMessage, setMermaidMessage] = useState('')
   const [mermaidSvg, setMermaidSvg] = useState('')
   const [mermaidError, setMermaidError] = useState('')
+  const [isConvertingMermaid, setIsConvertingMermaid] = useState(false)
 
   const refreshRecents = useCallback(async () => {
     const data = await invoke<RecentItem[]>('list_recents')
@@ -197,6 +208,7 @@ function App() {
 
   // Pending file path for the startup race condition (event arrives before excalidrawApi is ready)
   const pendingOpenFile = useRef<string | null>(null)
+  const pendingExcalidrawContentsRef = useRef<ApplyExcalidrawContentsRequest | null>(null)
   const excalidrawPathRef = useRef<string | null>(null)
   const excalidrawNameRef = useRef('')
   const excalidrawSceneSnapshotRef = useRef<ExcalidrawSceneSnapshot | null>(null)
@@ -401,14 +413,7 @@ function App() {
       message,
       markDocumentClean,
       refreshRecentsOnSuccess,
-    }: {
-      contents: string
-      path: string | null
-      name?: string | null
-      message: string
-      markDocumentClean?: boolean
-      refreshRecentsOnSuccess?: boolean
-    }) => {
+    }: ApplyExcalidrawContentsRequest) => {
       console.log('[excalibur] applyExcalidrawFile: START', {
         path,
         name,
@@ -708,6 +713,13 @@ function App() {
   useEffect(() => {
     if (!excalidrawApi) return
 
+    if (pendingExcalidrawContentsRef.current) {
+      const pendingContents = pendingExcalidrawContentsRef.current
+      pendingExcalidrawContentsRef.current = null
+      applyExcalidrawContents(pendingContents)
+      return
+    }
+
     // Check for a file path queued from an event that arrived before the API was ready
     if (pendingOpenFile.current) {
       const path = pendingOpenFile.current
@@ -723,7 +735,7 @@ function App() {
         loadExcalidrawPath(path)
       }
     })
-  }, [excalidrawApi, loadExcalidrawPath])
+  }, [applyExcalidrawContents, excalidrawApi, loadExcalidrawPath])
 
   const handleOpenMermaid = useCallback(async () => {
     if (!confirmMermaidAction('load another document')) {
@@ -773,6 +785,61 @@ function App() {
     setTab('mermaid')
     refreshRecents()
   }, [confirmMermaidAction, refreshRecents, setMermaidPersistedState])
+
+  const handleConvertMermaidToExcalidraw = useCallback(async () => {
+    const cleanedText = mermaidText.replace(/^\uFEFF/, '').trim()
+
+    if (!cleanedText) {
+      setMermaidMessage('Nothing to convert yet.')
+      return
+    }
+
+    if (mermaidError) {
+      setMermaidMessage('Fix Mermaid syntax before converting.')
+      return
+    }
+
+    if (!confirmExcalidrawAction('replace the current Excalidraw document')) {
+      return
+    }
+
+    const autosave = autosaveSnapshotRef.current ?? readStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY)
+    if (autosave) {
+      setRecoverableExcalidrawAutosave(autosave)
+    }
+
+    setIsConvertingMermaid(true)
+    setMermaidMessage('')
+
+    try {
+      const { elements: skeletons, files = {} } = await parseMermaidToExcalidraw(cleanedText)
+      const elements = convertToExcalidrawElements(skeletons, { regenerateIds: true })
+      const nextName = mermaidName.trim()
+
+      pendingExcalidrawContentsRef.current = {
+        contents: serializeAsJSON(elements, {}, files, 'local'),
+        path: null,
+        name: nextName,
+        message: nextName
+          ? `Converted Mermaid diagram to Excalidraw as ${nextName}.`
+          : 'Converted Mermaid diagram to Excalidraw.',
+        markDocumentClean: false,
+      }
+      setTab('excalidraw')
+    } catch (error) {
+      console.error('[excalibur] handleConvertMermaidToExcalidraw: FAILED', error)
+      pendingExcalidrawContentsRef.current = null
+      setMermaidMessage('Unable to convert Mermaid to Excalidraw.')
+    } finally {
+      setIsConvertingMermaid(false)
+    }
+  }, [
+    confirmExcalidrawAction,
+    mermaidError,
+    mermaidName,
+    mermaidText,
+    setRecoverableExcalidrawAutosave,
+  ])
 
   const handleMermaidKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -943,6 +1010,9 @@ function App() {
                   Save
                 </button>
                 <button onClick={handleOpenMermaid}>Open</button>
+                <button onClick={handleConvertMermaidToExcalidraw} disabled={isConvertingMermaid}>
+                  {isConvertingMermaid ? 'Converting...' : 'Convert to Excalidraw'}
+                </button>
               </div>
             </div>
             <div className="mermaid-grid">

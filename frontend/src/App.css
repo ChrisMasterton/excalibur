@@ -207,6 +207,15 @@
   transform: translateY(-1px);
 }
 
+.actions button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.actions button:disabled:hover {
+  transform: none;
+}
+
 .canvas-frame {
   height: 70vh;
   border-radius: 18px;
