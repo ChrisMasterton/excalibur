@@ -119,6 +119,19 @@ fn file_name(path: &Path) -> Option<String> {
         .map(|name| name.to_string_lossy().to_string())
 }
 
+fn default_excalidraw_file_name(name: Option<&str>) -> String {
+    let base_name = name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("drawing");
+
+    if base_name.ends_with(".excalidraw") || base_name.ends_with(".json") {
+        base_name.to_string()
+    } else {
+        format!("{base_name}.excalidraw")
+    }
+}
+
 #[tauri::command]
 fn list_recents(app: AppHandle) -> Vec<RecentItem> {
     load_recents(&app)
@@ -203,6 +216,7 @@ async fn save_excalidraw_file(
     app: AppHandle,
     request: SaveFileRequest,
 ) -> Result<SaveFileResponse, String> {
+    let suggested_name = default_excalidraw_file_name(request.name.as_deref());
     let path = if let Some(path) = request.path {
         PathBuf::from(path)
     } else {
@@ -210,7 +224,7 @@ async fn save_excalidraw_file(
         app.dialog()
             .file()
             .add_filter("Excalidraw", &["excalidraw", "json"])
-            .set_file_name("drawing.excalidraw")
+            .set_file_name(suggested_name)
             .save_file(move |file_path| {
                 let _ = sender.try_send(file_path);
             });

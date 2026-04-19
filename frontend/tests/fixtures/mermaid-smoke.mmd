@@ -1,0 +1,15 @@
+flowchart TD
+  A[User opens app] --> B{Choose client}
+  B --> C[Mobile App<br/>iOS / Android]
+  B --> D[Admin Dashboard]
+
+  subgraph Mobile["Mobile Client"]
+    C --> C1[Launch app]
+    C1 --> C2{Stored session?}
+    C2 -- Yes --> C3[Home]
+    C2 -- No --> C4[Log in]
+  end
+
+  D --> D1[Users list]
+  D1 --> D2[Edit user]
+  D2 --> D3[Save changes]

@@ -406,22 +406,28 @@ function App() {
   }, [])
 
   const applyExcalidrawContents = useCallback(
-    ({
+    (request: ApplyExcalidrawContentsRequest) => {
+      const {
       contents,
       path,
       name,
       message,
       markDocumentClean,
       refreshRecentsOnSuccess,
-    }: ApplyExcalidrawContentsRequest) => {
+      } = request
       console.log('[excalibur] applyExcalidrawFile: START', {
         path,
         name,
         contentLength: contents.length,
       })
 
-      if (!excalidrawApi) {
-        console.warn('[excalibur] applyExcalidrawFile: excalidrawApi is null, aborting')
+      if (!excalidrawApi || tab !== 'excalidraw') {
+        console.warn('[excalibur] applyExcalidrawFile: excalidrawApi unavailable, queueing request')
+        pendingExcalidrawContentsRef.current = request
+        if (tab !== 'excalidraw') {
+          setExcalidrawApiInternal(null)
+          setTab('excalidraw')
+        }
         return
       }
       console.log('[excalibur] applyExcalidrawFile: excalidrawApi is available')
@@ -515,6 +521,7 @@ function App() {
       setCurrentExcalidrawAutosave,
       setExcalidrawDocument,
       setExcalidrawPersistedState,
+      tab,
       updateExcalidrawDirtyState,
     ],
   )
@@ -532,6 +539,17 @@ function App() {
     },
     [applyExcalidrawContents],
   )
+
+  const flushPendingExcalidrawContents = useCallback(() => {
+    if (!excalidrawApi || tab !== 'excalidraw' || !pendingExcalidrawContentsRef.current) {
+      return false
+    }
+
+    const pendingContents = pendingExcalidrawContentsRef.current
+    pendingExcalidrawContentsRef.current = null
+    applyExcalidrawContents(pendingContents)
+    return true
+  }, [applyExcalidrawContents, excalidrawApi, tab])
 
   const handleExcalidrawChange = useCallback(
     (...[elements, appState, files]: Parameters<ExcalidrawChangeHandler>) => {
@@ -713,10 +731,7 @@ function App() {
   useEffect(() => {
     if (!excalidrawApi) return
 
-    if (pendingExcalidrawContentsRef.current) {
-      const pendingContents = pendingExcalidrawContentsRef.current
-      pendingExcalidrawContentsRef.current = null
-      applyExcalidrawContents(pendingContents)
+    if (flushPendingExcalidrawContents()) {
       return
     }
 
@@ -735,7 +750,11 @@ function App() {
         loadExcalidrawPath(path)
       }
     })
-  }, [applyExcalidrawContents, excalidrawApi, loadExcalidrawPath])
+  }, [excalidrawApi, flushPendingExcalidrawContents, loadExcalidrawPath])
+
+  useEffect(() => {
+    flushPendingExcalidrawContents()
+  }, [flushPendingExcalidrawContents])
 
   const handleOpenMermaid = useCallback(async () => {
     if (!confirmMermaidAction('load another document')) {
@@ -815,21 +834,24 @@ function App() {
       const { elements: skeletons, files = {} } = await parseMermaidToExcalidraw(cleanedText)
       const elements = convertToExcalidrawElements(skeletons, { regenerateIds: true })
       const nextName = mermaidName.trim()
+      const serialized = serializeAsJSON(elements, {}, files, 'local')
+      const savedFile = await invoke<SaveFileResponse>('save_excalidraw_file', {
+        request: {
+          path: null,
+          name: nextName || undefined,
+          contents: serialized,
+        },
+      })
+      const savedContents = await invoke<OpenFileResponse>('load_excalidraw_path', {
+        path: savedFile.path,
+      })
 
-      pendingExcalidrawContentsRef.current = {
-        contents: serializeAsJSON(elements, {}, files, 'local'),
-        path: null,
-        name: nextName,
-        message: nextName
-          ? `Converted Mermaid diagram to Excalidraw as ${nextName}.`
-          : 'Converted Mermaid diagram to Excalidraw.',
-        markDocumentClean: false,
-      }
-      setTab('excalidraw')
+      applyExcalidrawFile(savedContents)
+      setMermaidMessage(`Converted Mermaid and saved to ${savedFile.path}.`)
     } catch (error) {
       console.error('[excalibur] handleConvertMermaidToExcalidraw: FAILED', error)
       pendingExcalidrawContentsRef.current = null
-      setMermaidMessage('Unable to convert Mermaid to Excalidraw.')
+      setMermaidMessage(error instanceof Error ? error.message : 'Unable to convert Mermaid to Excalidraw.')
     } finally {
       setIsConvertingMermaid(false)
     }
@@ -838,6 +860,7 @@ function App() {
     mermaidError,
     mermaidName,
     mermaidText,
+    applyExcalidrawFile,
     setRecoverableExcalidrawAutosave,
   ])
 
@@ -1011,7 +1034,7 @@ function App() {
                 </button>
                 <button onClick={handleOpenMermaid}>Open</button>
                 <button onClick={handleConvertMermaidToExcalidraw} disabled={isConvertingMermaid}>
-                  {isConvertingMermaid ? 'Converting...' : 'Convert to Excalidraw'}
+                  {isConvertingMermaid ? 'Saving...' : 'Convert & Save Excalidraw'}
                 </button>
               </div>
             </div>
