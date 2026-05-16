@@ -39,6 +39,12 @@ struct SaveFileRequest {
     contents: String,
 }
 
+#[derive(Deserialize)]
+struct SavePngFileRequest {
+    name: Option<String>,
+    contents: Vec<u8>,
+}
+
 fn now_epoch() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -114,6 +120,13 @@ fn write_file(path: &Path, contents: &str) -> Result<(), String> {
     fs::write(path, contents).map_err(|error| error.to_string())
 }
 
+fn write_binary_file(path: &Path, contents: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(path, contents).map_err(|error| error.to_string())
+}
+
 fn file_name(path: &Path) -> Option<String> {
     path.file_name()
         .map(|name| name.to_string_lossy().to_string())
@@ -130,6 +143,25 @@ fn default_excalidraw_file_name(name: Option<&str>) -> String {
     } else {
         format!("{base_name}.excalidraw")
     }
+}
+
+fn default_png_file_name(name: Option<&str>) -> String {
+    let base_name = name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("drawing");
+
+    if base_name.to_ascii_lowercase().ends_with(".png") {
+        return base_name.to_string();
+    }
+
+    let stem = Path::new(base_name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.trim().is_empty())
+        .unwrap_or(base_name);
+
+    format!("{stem}.png")
 }
 
 #[tauri::command]
@@ -247,6 +279,35 @@ async fn save_excalidraw_file(
 }
 
 #[tauri::command]
+async fn save_png_file(
+    app: AppHandle,
+    request: SavePngFileRequest,
+) -> Result<SaveFileResponse, String> {
+    let suggested_name = default_png_file_name(request.name.as_deref());
+    let (sender, mut receiver) = channel(1);
+    app.dialog()
+        .file()
+        .add_filter("PNG", &["png"])
+        .set_file_name(suggested_name)
+        .save_file(move |file_path| {
+            let _ = sender.try_send(file_path);
+        });
+    let target = receiver
+        .recv()
+        .await
+        .ok_or_else(|| "Save cancelled".to_string())?;
+    let path = target
+        .ok_or_else(|| "Save cancelled".to_string())?
+        .into_path()
+        .map_err(|e| e.to_string())?;
+
+    write_binary_file(&path, &request.contents)?;
+    Ok(SaveFileResponse {
+        path: path.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
 async fn open_mermaid_file(app: AppHandle) -> Result<Option<OpenFileResponse>, String> {
     let (sender, mut receiver) = channel(1);
     app.dialog()
@@ -349,6 +410,7 @@ fn main() {
             open_excalidraw_file,
             load_excalidraw_path,
             save_excalidraw_file,
+            save_png_file,
             open_mermaid_file,
             load_mermaid_path,
             save_mermaid_file,

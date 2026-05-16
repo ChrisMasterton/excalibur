@@ -1,5 +1,5 @@
 import { type ComponentProps, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { Excalidraw, convertToExcalidrawElements, serializeAsJSON } from '@excalidraw/excalidraw'
+import { Excalidraw, convertToExcalidrawElements, exportToBlob, serializeAsJSON } from '@excalidraw/excalidraw'
 import { parseMermaidToExcalidraw } from '@excalidraw/mermaid-to-excalidraw'
 import type {
   BinaryFileData,
@@ -96,6 +96,8 @@ type MermaidPersistedState = {
 }
 
 type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>
+type PngExportElements = Parameters<typeof exportToBlob>[0]['elements']
+type PngExportFiles = Parameters<typeof exportToBlob>[0]['files']
 
 type ApplyExcalidrawContentsRequest = {
   contents: string
@@ -152,9 +154,30 @@ function clearStoredExcalidrawAutosave(storageKey: string) {
   window.localStorage.removeItem(storageKey)
 }
 
+function parseSerializedExcalidrawData(contents: string): ExcalidrawData | null {
+  try {
+    const parsed = JSON.parse(contents) as Partial<ExcalidrawData> & {
+      data?: Partial<ExcalidrawData>
+    }
+    const raw = parsed.data && parsed.data.elements ? parsed.data : parsed
+    return {
+      elements: raw.elements ?? [],
+      appState: raw.appState ?? {},
+      files: raw.files ?? {},
+    }
+  } catch {
+    return null
+  }
+}
+
+async function blobToByteArray(blob: Blob) {
+  return Array.from(new Uint8Array(await blob.arrayBuffer()))
+}
+
 function App() {
   const [excalidrawApi, setExcalidrawApiInternal] = useState<ExcalidrawImperativeAPI | null>(null)
   const [tab, setTab] = useState<'excalidraw' | 'mermaid'>('excalidraw')
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [recents, setRecents] = useState<RecentItem[]>([])
 
   const setExcalidrawApi = useCallback((api: ExcalidrawImperativeAPI | null) => {
@@ -166,6 +189,8 @@ function App() {
   const [excalidrawName, setExcalidrawName] = useState('')
   const [excalidrawMessage, setExcalidrawMessage] = useState('')
   const [hasUnsavedExcalidrawChanges, setHasUnsavedExcalidrawChanges] = useState(false)
+  const [exportTransparentBackground, setExportTransparentBackground] = useState(false)
+  const [isExportingPng, setIsExportingPng] = useState(false)
   const [recoverableAutosave, setRecoverableAutosave] = useState<ExcalidrawAutosave | null>(() =>
     readStoredExcalidrawAutosave(EXCALIDRAW_RECOVERY_KEY),
   )
@@ -191,8 +216,27 @@ function App() {
 
   useEffect(() => {
     console.log('[excalibur] App mounted')
-    return () => console.log('[excalibur] App unmounted')
+    return () => {
+      if (suppressEmptyChangeTimerRef.current !== null) {
+        window.clearTimeout(suppressEmptyChangeTimerRef.current)
+      }
+      console.log('[excalibur] App unmounted')
+    }
   }, [])
+
+  useEffect(() => {
+    if (!excalidrawApi) {
+      return
+    }
+
+    const refreshTimer = window.setTimeout(() => {
+      excalidrawApi.refresh()
+    }, 260)
+
+    return () => {
+      window.clearTimeout(refreshTimer)
+    }
+  }, [excalidrawApi, isSidebarCollapsed])
 
   useEffect(() => {
     let isActive = true
@@ -213,6 +257,8 @@ function App() {
   const excalidrawNameRef = useRef('')
   const excalidrawSceneSnapshotRef = useRef<ExcalidrawSceneSnapshot | null>(null)
   const excalidrawPersistedRef = useRef<ExcalidrawPersistedState | null>(null)
+  const ignoreEmptyExcalidrawChangeUntilRef = useRef(0)
+  const suppressEmptyChangeTimerRef = useRef<number | null>(null)
   const autosaveSnapshotRef = useRef<ExcalidrawAutosave | null>(
     readStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY),
   )
@@ -471,6 +517,16 @@ function App() {
         }
 
         excalidrawSceneSnapshotRef.current = snapshot
+        if (snapshot.hasContent) {
+          ignoreEmptyExcalidrawChangeUntilRef.current = Date.now() + 3000
+          if (suppressEmptyChangeTimerRef.current !== null) {
+            window.clearTimeout(suppressEmptyChangeTimerRef.current)
+          }
+          suppressEmptyChangeTimerRef.current = window.setTimeout(() => {
+            ignoreEmptyExcalidrawChangeUntilRef.current = 0
+            suppressEmptyChangeTimerRef.current = null
+          }, 3000)
+        }
         setExcalidrawDocument(path, normalizedName)
 
         console.log('[excalibur] applyExcalidrawFile: calling updateScene...')
@@ -554,6 +610,15 @@ function App() {
   const handleExcalidrawChange = useCallback(
     (...[elements, appState, files]: Parameters<ExcalidrawChangeHandler>) => {
       const hasContent = elements.some((element) => !element.isDeleted)
+
+      if (
+        !hasContent &&
+        Date.now() < ignoreEmptyExcalidrawChangeUntilRef.current &&
+        excalidrawSceneSnapshotRef.current?.hasContent
+      ) {
+        return
+      }
+
       const snapshot = {
         contents: serializeAsJSON(elements, appState, files, 'local'),
         hasContent,
@@ -645,6 +710,84 @@ function App() {
     setCurrentExcalidrawAutosave,
     setExcalidrawDocument,
     setExcalidrawPersistedState,
+  ])
+
+  const handleExportExcalidrawPng = useCallback(async () => {
+    if (!excalidrawApi || isExportingPng) {
+      return
+    }
+
+    let exportElements: PngExportElements = excalidrawApi.getSceneElements()
+    let exportFiles: PngExportFiles = excalidrawApi.getFiles()
+    let snapshotAppState: Record<string, unknown> = {}
+
+    if (exportElements.length === 0 && excalidrawSceneSnapshotRef.current?.hasContent) {
+      const snapshotData = parseSerializedExcalidrawData(excalidrawSceneSnapshotRef.current.contents)
+      if (snapshotData) {
+        exportElements = snapshotData.elements
+          .filter((element) => (element as { isDeleted?: boolean }).isDeleted !== true)
+          .map((element) => {
+            const nextElement = { ...(element as Record<string, unknown>) }
+            if (!Array.isArray(nextElement.groupIds)) {
+              nextElement.groupIds = []
+            }
+            if (!Array.isArray(nextElement.boundElements)) {
+              nextElement.boundElements = nextElement.boundElements ?? null
+            }
+            return nextElement
+          }) as unknown as PngExportElements
+        exportFiles = snapshotData.files
+        snapshotAppState = snapshotData.appState
+      }
+    }
+
+    if (exportElements.length === 0) {
+      setExcalidrawMessage('Nothing to export yet.')
+      return
+    }
+
+    setIsExportingPng(true)
+    setExcalidrawMessage('')
+
+    try {
+      const appState = excalidrawApi.getAppState()
+      const blob = await exportToBlob({
+        elements: exportElements,
+        appState: {
+          ...appState,
+          ...snapshotAppState,
+          exportBackground: !exportTransparentBackground,
+          exportEmbedScene: false,
+          exportScale: appState.exportScale || 1,
+        },
+        files: exportFiles,
+        mimeType: 'image/png',
+        exportPadding: 16,
+      })
+      const response = await invoke<SaveFileResponse>('save_png_file', {
+        request: {
+          name: excalidrawName.trim() || undefined,
+          contents: await blobToByteArray(blob),
+        },
+      })
+
+      setExcalidrawMessage(`Exported PNG to ${response.path}.`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.toLowerCase().includes('cancel')) {
+        setExcalidrawMessage('PNG export cancelled.')
+      } else {
+        console.error('[excalibur] handleExportExcalidrawPng: FAILED', error)
+        setExcalidrawMessage('Failed to export PNG.')
+      }
+    } finally {
+      setIsExportingPng(false)
+    }
+  }, [
+    excalidrawApi,
+    excalidrawName,
+    exportTransparentBackground,
+    isExportingPng,
   ])
 
   const handleNewExcalidraw = useCallback(() => {
@@ -917,11 +1060,31 @@ function App() {
   }, [recents, loadExcalidrawPath, loadMermaidPath])
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+      <button
+        className="sidebar-return"
+        type="button"
+        aria-expanded={!isSidebarCollapsed}
+        aria-label="Show sidebar"
+        onClick={() => setIsSidebarCollapsed(false)}
+      >
+        Show sidebar
+      </button>
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-title">Excalibur</div>
-          <div className="brand-sub">Excalidraw + Mermaid workspace</div>
+        <div className="brand-row">
+          <div className="brand">
+            <div className="brand-title">Excalibur</div>
+            <div className="brand-sub">Excalidraw + Mermaid workspace</div>
+          </div>
+          <button
+            className="sidebar-hide"
+            type="button"
+            aria-expanded={!isSidebarCollapsed}
+            aria-label="Hide sidebar"
+            onClick={() => setIsSidebarCollapsed(true)}
+          >
+            Hide
+          </button>
         </div>
         <div className="tab-buttons">
           <button
@@ -947,7 +1110,7 @@ function App() {
         {tab === 'excalidraw' ? (
           <section className="panel">
             <header className="panel-header">
-              <div>
+              <div className="panel-title">
                 <h1>Excalidraw editor</h1>
                 <p>Open, edit, and save .excalidraw files.</p>
               </div>
@@ -957,7 +1120,7 @@ function App() {
               </div>
             </header>
             <div className="control-row">
-              <label>
+              <label className="field-control field-control-name">
                 Name
                 <input
                   value={excalidrawName}
@@ -977,7 +1140,7 @@ function App() {
                   placeholder="Architecture brainstorm"
                 />
               </label>
-              <label>
+              <label className="field-control field-control-file">
                 File
                 <input
                   value={excalidrawPath ?? ''}
@@ -991,6 +1154,17 @@ function App() {
                 </button>
                 <button onClick={handleOpenExcalidraw}>Open</button>
                 <button onClick={handleNewExcalidraw}>New</button>
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={exportTransparentBackground}
+                    onChange={(event) => setExportTransparentBackground(event.target.checked)}
+                  />
+                  Transparent background
+                </label>
+                <button onClick={handleExportExcalidrawPng} disabled={!excalidrawApi || isExportingPng}>
+                  {isExportingPng ? 'Exporting...' : 'Export PNG'}
+                </button>
                 {recoverableAutosave ? (
                   <button className="recover" onClick={handleRecoverExcalidraw}>
                     Recover backup
@@ -1005,14 +1179,14 @@ function App() {
         ) : (
           <section className="panel">
             <header className="panel-header">
-              <div>
+              <div className="panel-title">
                 <h1>Mermaid editor</h1>
                 <p>Write Mermaid syntax and render instantly.</p>
               </div>
               <div className="status">{mermaidMessage}</div>
             </header>
             <div className="control-row">
-              <label>
+              <label className="field-control field-control-name">
                 Name
                 <input
                   value={mermaidName}
@@ -1024,7 +1198,7 @@ function App() {
                   placeholder="Auth flow"
                 />
               </label>
-              <label>
+              <label className="field-control field-control-file">
                 File
                 <input value={mermaidPath ?? ''} readOnly placeholder="No file loaded" />
               </label>

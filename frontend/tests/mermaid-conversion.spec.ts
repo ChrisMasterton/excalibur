@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 type MockState = {
   invocations: Array<{ cmd: string }>
   savedFiles: Record<string, string>
+  savedPngFiles: Record<string, number[]>
 }
 
 declare global {
@@ -17,6 +18,7 @@ const mermaidSource = readFileSync(new URL('./fixtures/mermaid-smoke.mmd', impor
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const savedFiles = {}
+    const savedPngFiles = {}
     const invocations = []
     let callbackId = 0
     let listenerId = 0
@@ -29,6 +31,15 @@ test.beforeEach(async ({ page }) => {
         : `${baseName}.excalidraw`
     }
 
+    const getPngFileName = (name) => {
+      const trimmed = typeof name === 'string' ? name.trim() : ''
+      const baseName = trimmed || 'drawing'
+      if (baseName.toLowerCase().endsWith('.png')) {
+        return baseName
+      }
+      return `${baseName.replace(/\.[^/.]+$/, '')}.png`
+    }
+
     const fileNameFromPath = (path) => {
       const parts = path.split('/')
       return parts[parts.length - 1] ?? path
@@ -38,6 +49,7 @@ test.beforeEach(async ({ page }) => {
     window.__PLAYWRIGHT_TAURI_MOCK__ = {
       invocations,
       savedFiles,
+      savedPngFiles,
     }
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener() {},
@@ -82,6 +94,12 @@ test.beforeEach(async ({ page }) => {
               contents,
             }
           }
+          case 'save_png_file': {
+            const request = args.request ?? {}
+            const path = `/mock/${getPngFileName(request.name)}`
+            savedPngFiles[path] = request.contents
+            return { path }
+          }
           case 'take_pending_file':
             return null
           default:
@@ -116,5 +134,35 @@ test('converts Mermaid into a saved Excalidraw file', async ({ page }) => {
   expect(serialized.elements?.some((element) => element.isDeleted !== true)).toBe(true)
   expect(mockState.invocations.map((call) => call.cmd)).toEqual(
     expect.arrayContaining(['save_excalidraw_file', 'load_excalidraw_path']),
+  )
+})
+
+test('collapses the sidebar and exports the current drawing as PNG', async ({ page }) => {
+  await page.goto('/')
+
+  await page.getByRole('button', { name: 'Hide sidebar' }).click()
+  await expect(page.locator('.app-shell')).toHaveClass(/sidebar-collapsed/)
+  await page.getByRole('button', { name: 'Show sidebar' }).click()
+  await expect(page.locator('.app-shell')).not.toHaveClass(/sidebar-collapsed/)
+
+  await page.getByRole('button', { name: 'Mermaid' }).click()
+  await page.getByLabel('Name').fill('smoke-flow')
+  await page.locator('.mermaid-editor textarea').fill(mermaidSource)
+  await page.getByRole('button', { name: 'Convert & Save Excalidraw' }).click()
+
+  await expect(page.getByRole('button', { name: 'Excalidraw' })).toHaveClass(/active/)
+  await expect(page.getByLabel('File')).toHaveValue('/mock/smoke-flow.excalidraw')
+
+  await page.getByLabel('Transparent background').check()
+  await page.getByRole('button', { name: 'Export PNG' }).click()
+  await expect(page.getByText('Exported PNG to /mock/smoke-flow.png.')).toBeVisible()
+
+  const mockState = await page.evaluate(() => window.__PLAYWRIGHT_TAURI_MOCK__) as MockState
+  const pngBytes = mockState.savedPngFiles['/mock/smoke-flow.png']
+
+  expect(pngBytes.length).toBeGreaterThan(8)
+  expect(pngBytes.slice(0, 8)).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+  expect(mockState.invocations.map((call) => call.cmd)).toEqual(
+    expect.arrayContaining(['save_png_file']),
   )
 })
