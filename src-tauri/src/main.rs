@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,14 @@ struct OpenFileResponse {
 #[derive(Serialize)]
 struct SaveFileResponse {
     path: String,
+}
+
+#[derive(Serialize)]
+struct ImageFileResponse {
+    path: String,
+    name: Option<String>,
+    mime_type: String,
+    data_url: String,
 }
 
 #[derive(Deserialize)]
@@ -164,6 +173,20 @@ fn default_png_file_name(name: Option<&str>) -> String {
     format!("{stem}.png")
 }
 
+fn supported_image_mime_type(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => Some("image/png"),
+        Some("jpg") | Some("jpeg") => Some("image/jpeg"),
+        Some("webp") => Some("image/webp"),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 fn list_recents(app: AppHandle) -> Vec<RecentItem> {
     load_recents(&app)
@@ -240,6 +263,33 @@ fn load_excalidraw_path(app: AppHandle, path: String) -> Result<OpenFileResponse
         path: path_string,
         name,
         contents,
+    })
+}
+
+#[tauri::command]
+fn load_image_file(path: String) -> Result<ImageFileResponse, String> {
+    eprintln!("[excalibur] load_image_file: loading from path={}", path);
+    let path_buf = PathBuf::from(&path);
+    let mime_type = supported_image_mime_type(&path_buf)
+        .ok_or_else(|| "Unsupported image type. Use PNG, JPEG, or WebP.".to_string())?;
+    let contents = fs::read(&path_buf).map_err(|error| {
+        eprintln!(
+            "[excalibur] load_image_file: FAILED to read {:?}: {}",
+            path_buf, error
+        );
+        error.to_string()
+    })?;
+    let data_url = format!(
+        "data:{};base64,{}",
+        mime_type,
+        general_purpose::STANDARD.encode(contents)
+    );
+
+    Ok(ImageFileResponse {
+        path: path_buf.to_string_lossy().to_string(),
+        name: file_name(&path_buf),
+        mime_type: mime_type.to_string(),
+        data_url,
     })
 }
 
@@ -394,6 +444,11 @@ fn take_pending_file(app: AppHandle) -> Option<String> {
     path
 }
 
+#[tauri::command]
+fn exit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 fn file_path_from_url(url: &url::Url) -> Option<String> {
     url.to_file_path()
         .ok()
@@ -409,12 +464,14 @@ fn main() {
             list_recents,
             open_excalidraw_file,
             load_excalidraw_path,
+            load_image_file,
             save_excalidraw_file,
             save_png_file,
             open_mermaid_file,
             load_mermaid_path,
             save_mermaid_file,
-            take_pending_file
+            take_pending_file,
+            exit_app
         ])
         .setup(|app| {
             // Check for a file opened at launch (e.g. double-click in Finder).

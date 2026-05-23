@@ -1,7 +1,14 @@
 import { type ComponentProps, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { Excalidraw, convertToExcalidrawElements, exportToBlob, serializeAsJSON } from '@excalidraw/excalidraw'
+import {
+  CaptureUpdateAction,
+  Excalidraw,
+  convertToExcalidrawElements,
+  serializeAsJSON,
+  viewportCoordsToSceneCoords,
+} from '@excalidraw/excalidraw'
 import { parseMermaidToExcalidraw } from '@excalidraw/mermaid-to-excalidraw'
 import type {
+  AppState,
   BinaryFileData,
   ExcalidrawImperativeAPI,
 } from '@excalidraw/excalidraw/types'
@@ -72,6 +79,13 @@ type SaveFileResponse = {
   path: string
 }
 
+type LoadImageFileResponse = {
+  path: string
+  name?: string | null
+  mime_type: string
+  data_url: string
+}
+
 type ExcalidrawAutosave = {
   contents: string
   path: string | null
@@ -96,8 +110,6 @@ type MermaidPersistedState = {
 }
 
 type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>
-type PngExportElements = Parameters<typeof exportToBlob>[0]['elements']
-type PngExportFiles = Parameters<typeof exportToBlob>[0]['files']
 
 type ApplyExcalidrawContentsRequest = {
   contents: string
@@ -108,9 +120,37 @@ type ApplyExcalidrawContentsRequest = {
   refreshRecentsOnSuccess?: boolean
 }
 
+type ImageImportPayload = {
+  name: string
+  mimeType: string
+  dataUrl: string
+  sourcePath?: string | null
+}
+
+type CanvasClientPosition = {
+  clientX: number
+  clientY: number
+}
+
+type SaveButtonKind = 'excalidraw' | 'mermaid'
+
 const EXCALIDRAW_AUTOSAVE_KEY = 'excalibur.excalidraw.autosave.current'
 const EXCALIDRAW_RECOVERY_KEY = 'excalibur.excalidraw.autosave.recovery'
 const INITIAL_MERMAID_TEXT = 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Ship it]\n  B -->|No| D[Refine]'
+const SUPPORTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const IMAGE_IMPORT_MIME_BY_EXTENSION: Record<string, string> = {
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+}
+
+function getSaveButtonPopClass(popCount: number) {
+  if (popCount === 0) {
+    return ''
+  }
+  return popCount % 2 === 0 ? ' save-pop-even' : ' save-pop-odd'
+}
 
 function normalizeExcalidrawName(name?: string | null) {
   return name?.replace(/\.[^/.]+$/, '') ?? ''
@@ -154,24 +194,93 @@ function clearStoredExcalidrawAutosave(storageKey: string) {
   window.localStorage.removeItem(storageKey)
 }
 
-function parseSerializedExcalidrawData(contents: string): ExcalidrawData | null {
-  try {
-    const parsed = JSON.parse(contents) as Partial<ExcalidrawData> & {
-      data?: Partial<ExcalidrawData>
-    }
-    const raw = parsed.data && parsed.data.elements ? parsed.data : parsed
-    return {
-      elements: raw.elements ?? [],
-      appState: raw.appState ?? {},
-      files: raw.files ?? {},
-    }
-  } catch {
-    return null
+function normalizeImageMimeType(mimeType: string) {
+  return mimeType === 'image/jpg' ? 'image/jpeg' : mimeType
+}
+
+function getImageExtension(name: string) {
+  const extension = name.split('.').pop()
+  return extension ? extension.toLowerCase() : ''
+}
+
+function getSupportedImageMimeTypeFromName(name: string) {
+  return IMAGE_IMPORT_MIME_BY_EXTENSION[getImageExtension(name)] ?? null
+}
+
+function getSupportedImageMimeTypeForFile(file: File) {
+  const normalizedType = normalizeImageMimeType(file.type)
+  if (SUPPORTED_IMAGE_MIME_TYPES.has(normalizedType)) {
+    return normalizedType
+  }
+  return getSupportedImageMimeTypeFromName(file.name)
+}
+
+function isSupportedImagePath(path: string) {
+  return getSupportedImageMimeTypeFromName(path) !== null
+}
+
+function getFirstSupportedImageFile(files: FileList | File[]) {
+  return Array.from(files).find((file) => getSupportedImageMimeTypeForFile(file)) ?? null
+}
+
+function byteArrayToBase64(bytes: Uint8Array) {
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return window.btoa(binary)
+}
+
+async function fileToImageImportPayload(file: File): Promise<ImageImportPayload> {
+  const mimeType = getSupportedImageMimeTypeForFile(file)
+  if (!mimeType) {
+    throw new Error('Unsupported image type.')
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  return {
+    name: file.name || 'image',
+    mimeType,
+    dataUrl: `data:${mimeType};base64,${byteArrayToBase64(bytes)}`,
   }
 }
 
-async function blobToByteArray(blob: Blob) {
-  return Array.from(new Uint8Array(await blob.arrayBuffer()))
+function loadImageDimensions(dataUrl: string) {
+  return new Promise<{ width: number; height: number }>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => {
+      resolve({
+        width: image.naturalWidth || image.width,
+        height: image.naturalHeight || image.height,
+      })
+    }
+    image.onerror = () => reject(new Error('Unable to read image dimensions.'))
+    image.src = dataUrl
+  })
+}
+
+function getImageDisplaySize(width: number, height: number, appState: AppState) {
+  if (width <= 0 || height <= 0) {
+    return { width: 240, height: 180 }
+  }
+
+  const zoom = appState.zoom.value || 1
+  const maxHeight = Math.max(160, Math.min(appState.height - 120, appState.height * 0.5) / zoom)
+  const maxWidth = Math.max(160, (appState.width * 0.7) / zoom)
+  const scale = Math.min(1, maxWidth / width, maxHeight / height)
+
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  }
+}
+
+function createImageFileId() {
+  const id = typeof crypto?.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `image-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return id as BinaryFileData['id']
 }
 
 function App() {
@@ -179,18 +288,27 @@ function App() {
   const [tab, setTab] = useState<'excalidraw' | 'mermaid'>('excalidraw')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [recents, setRecents] = useState<RecentItem[]>([])
+  const [saveButtonPop, setSaveButtonPop] = useState<Record<SaveButtonKind, number>>({
+    excalidraw: 0,
+    mermaid: 0,
+  })
 
   const setExcalidrawApi = useCallback((api: ExcalidrawImperativeAPI | null) => {
     console.log('[excalibur] setExcalidrawApi called:', api ? 'API instance received' : 'null')
     setExcalidrawApiInternal(api)
   }, [])
 
+  const popSaveButton = useCallback((kind: SaveButtonKind) => {
+    setSaveButtonPop((current) => ({
+      ...current,
+      [kind]: current[kind] + 1,
+    }))
+  }, [])
+
   const [excalidrawPath, setExcalidrawPath] = useState<string | null>(null)
   const [excalidrawName, setExcalidrawName] = useState('')
   const [excalidrawMessage, setExcalidrawMessage] = useState('')
   const [hasUnsavedExcalidrawChanges, setHasUnsavedExcalidrawChanges] = useState(false)
-  const [exportTransparentBackground, setExportTransparentBackground] = useState(false)
-  const [isExportingPng, setIsExportingPng] = useState(false)
   const [recoverableAutosave, setRecoverableAutosave] = useState<ExcalidrawAutosave | null>(() =>
     readStoredExcalidrawAutosave(EXCALIDRAW_RECOVERY_KEY),
   )
@@ -253,6 +371,7 @@ function App() {
   // Pending file path for the startup race condition (event arrives before excalidrawApi is ready)
   const pendingOpenFile = useRef<string | null>(null)
   const pendingExcalidrawContentsRef = useRef<ApplyExcalidrawContentsRequest | null>(null)
+  const canvasFrameRef = useRef<HTMLDivElement | null>(null)
   const excalidrawPathRef = useRef<string | null>(null)
   const excalidrawNameRef = useRef('')
   const excalidrawSceneSnapshotRef = useRef<ExcalidrawSceneSnapshot | null>(null)
@@ -267,6 +386,7 @@ function App() {
     name: '',
     text: INITIAL_MERMAID_TEXT,
   })
+  const isQuittingRef = useRef(false)
   const hasUnsavedExcalidrawChangesRef = useRef(false)
   const hasUnsavedMermaidChangesRef = useRef(false)
 
@@ -425,16 +545,29 @@ function App() {
     let unlisten: (() => void) | null = null
 
     getCurrentWindow()
-      .onCloseRequested((event) => {
-        const hasExcalidrawChanges = hasUnsavedExcalidrawChangesRef.current
-        const hasMermaidChanges = hasUnsavedMermaidChangesRef.current
+      .onCloseRequested(async (event) => {
+        event.preventDefault()
 
-        if (!hasExcalidrawChanges && !hasMermaidChanges) {
+        if (isQuittingRef.current) {
           return
         }
 
-        if (!window.confirm(getExitUnsavedChangesMessage(hasExcalidrawChanges, hasMermaidChanges))) {
-          event.preventDefault()
+        const hasExcalidrawChanges = hasUnsavedExcalidrawChangesRef.current
+        const hasMermaidChanges = hasUnsavedMermaidChangesRef.current
+
+        if (
+          (hasExcalidrawChanges || hasMermaidChanges) &&
+          !window.confirm(getExitUnsavedChangesMessage(hasExcalidrawChanges, hasMermaidChanges))
+        ) {
+          return
+        }
+
+        isQuittingRef.current = true
+        try {
+          await invoke('exit_app')
+        } catch (error) {
+          isQuittingRef.current = false
+          console.error('[excalibur] close request failed to exit app', error)
         }
       })
       .then((cleanup) => {
@@ -701,94 +834,32 @@ function App() {
     }
     setExcalidrawPersistedState(snapshot, response.path, nextName)
     setExcalidrawMessage(`Saved to ${response.path}.`)
+    popSaveButton('excalidraw')
     refreshRecents()
   }, [
     excalidrawApi,
     excalidrawName,
     excalidrawPath,
+    popSaveButton,
     refreshRecents,
     setCurrentExcalidrawAutosave,
     setExcalidrawDocument,
     setExcalidrawPersistedState,
   ])
 
-  const handleExportExcalidrawPng = useCallback(async () => {
-    if (!excalidrawApi || isExportingPng) {
+  const handleExportExcalidrawPng = useCallback(() => {
+    if (!excalidrawApi) {
       return
     }
 
-    let exportElements: PngExportElements = excalidrawApi.getSceneElements()
-    let exportFiles: PngExportFiles = excalidrawApi.getFiles()
-    let snapshotAppState: Record<string, unknown> = {}
-
-    if (exportElements.length === 0 && excalidrawSceneSnapshotRef.current?.hasContent) {
-      const snapshotData = parseSerializedExcalidrawData(excalidrawSceneSnapshotRef.current.contents)
-      if (snapshotData) {
-        exportElements = snapshotData.elements
-          .filter((element) => (element as { isDeleted?: boolean }).isDeleted !== true)
-          .map((element) => {
-            const nextElement = { ...(element as Record<string, unknown>) }
-            if (!Array.isArray(nextElement.groupIds)) {
-              nextElement.groupIds = []
-            }
-            if (!Array.isArray(nextElement.boundElements)) {
-              nextElement.boundElements = nextElement.boundElements ?? null
-            }
-            return nextElement
-          }) as unknown as PngExportElements
-        exportFiles = snapshotData.files
-        snapshotAppState = snapshotData.appState
-      }
-    }
-
-    if (exportElements.length === 0) {
-      setExcalidrawMessage('Nothing to export yet.')
-      return
-    }
-
-    setIsExportingPng(true)
     setExcalidrawMessage('')
-
-    try {
-      const appState = excalidrawApi.getAppState()
-      const blob = await exportToBlob({
-        elements: exportElements,
-        appState: {
-          ...appState,
-          ...snapshotAppState,
-          exportBackground: !exportTransparentBackground,
-          exportEmbedScene: false,
-          exportScale: appState.exportScale || 1,
-        },
-        files: exportFiles,
-        mimeType: 'image/png',
-        exportPadding: 16,
-      })
-      const response = await invoke<SaveFileResponse>('save_png_file', {
-        request: {
-          name: excalidrawName.trim() || undefined,
-          contents: await blobToByteArray(blob),
-        },
-      })
-
-      setExcalidrawMessage(`Exported PNG to ${response.path}.`)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (message.toLowerCase().includes('cancel')) {
-        setExcalidrawMessage('PNG export cancelled.')
-      } else {
-        console.error('[excalibur] handleExportExcalidrawPng: FAILED', error)
-        setExcalidrawMessage('Failed to export PNG.')
-      }
-    } finally {
-      setIsExportingPng(false)
-    }
-  }, [
-    excalidrawApi,
-    excalidrawName,
-    exportTransparentBackground,
-    isExportingPng,
-  ])
+    excalidrawApi.updateScene({
+      appState: {
+        openDialog: { name: 'imageExport' },
+      },
+      captureUpdate: CaptureUpdateAction.NEVER,
+    })
+  }, [excalidrawApi])
 
   const handleNewExcalidraw = useCallback(() => {
     if (!excalidrawApi) {
@@ -854,6 +925,183 @@ function App() {
     },
     [applyExcalidrawFile, confirmExcalidrawAction],
   )
+
+  const isClientPointInCanvasFrame = useCallback((position: CanvasClientPosition) => {
+    const frame = canvasFrameRef.current
+    if (!frame) {
+      return false
+    }
+
+    const rect = frame.getBoundingClientRect()
+    return (
+      position.clientX >= rect.left &&
+      position.clientX <= rect.right &&
+      position.clientY >= rect.top &&
+      position.clientY <= rect.bottom
+    )
+  }, [])
+
+  const importImagePayloadToCanvas = useCallback(
+    async (payload: ImageImportPayload, position: CanvasClientPosition | null) => {
+      if (!excalidrawApi) {
+        setExcalidrawMessage('Canvas is still starting up. Try dropping the image again.')
+        return false
+      }
+
+      if (!SUPPORTED_IMAGE_MIME_TYPES.has(normalizeImageMimeType(payload.mimeType))) {
+        setExcalidrawMessage('Drop a PNG, JPEG, or WebP image to import it.')
+        return false
+      }
+
+      const appState = excalidrawApi.getAppState()
+      const scenePosition = viewportCoordsToSceneCoords(
+        position ?? {
+          clientX: appState.offsetLeft + appState.width / 2,
+          clientY: appState.offsetTop + appState.height / 2,
+        },
+        appState,
+      )
+      const imageDimensions = await loadImageDimensions(payload.dataUrl)
+      const displaySize = getImageDisplaySize(imageDimensions.width, imageDimensions.height, appState)
+      const fileId = createImageFileId()
+      const [imageElement] = convertToExcalidrawElements(
+        [
+          {
+            type: 'image',
+            x: scenePosition.x - displaySize.width / 2,
+            y: scenePosition.y - displaySize.height / 2,
+            width: displaySize.width,
+            height: displaySize.height,
+            fileId,
+            status: 'saved',
+            scale: [1, 1],
+          },
+        ],
+        { regenerateIds: true },
+      )
+
+      if (!imageElement) {
+        setExcalidrawMessage('Unable to import image.')
+        return false
+      }
+
+      excalidrawApi.updateScene({
+        elements: [...excalidrawApi.getSceneElementsIncludingDeleted(), imageElement],
+        appState: {
+          selectedElementIds: { [imageElement.id]: true },
+        },
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      })
+      excalidrawApi.addFiles([
+        {
+          id: fileId,
+          mimeType: normalizeImageMimeType(payload.mimeType) as BinaryFileData['mimeType'],
+          dataURL: payload.dataUrl as BinaryFileData['dataURL'],
+          created: Date.now(),
+          lastRetrieved: Date.now(),
+        },
+      ])
+      setTab('excalidraw')
+      setExcalidrawMessage(`Imported ${payload.sourcePath ?? payload.name}.`)
+      return true
+    },
+    [excalidrawApi],
+  )
+
+  const importNativeImagePath = useCallback(
+    async (path: string, position: CanvasClientPosition | null) => {
+      try {
+        const response = await invoke<LoadImageFileResponse>('load_image_file', { path })
+        return await importImagePayloadToCanvas(
+          {
+            name: response.name ?? response.path.split('/').pop() ?? 'image',
+            mimeType: response.mime_type,
+            dataUrl: response.data_url,
+            sourcePath: response.path,
+          },
+          position,
+        )
+      } catch (error) {
+        console.error('[excalibur] importNativeImagePath: FAILED', error)
+        setExcalidrawMessage('Drop a PNG, JPEG, or WebP image to import it.')
+        return false
+      }
+    },
+    [importImagePayloadToCanvas],
+  )
+
+  const handleCanvasImageDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!getFirstSupportedImageFile(event.dataTransfer.files)) {
+      return
+    }
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const handleCanvasImageDrop = useCallback(
+    async (event: React.DragEvent<HTMLDivElement>) => {
+      const file = getFirstSupportedImageFile(event.dataTransfer.files)
+      if (!file) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      const position = { clientX: event.clientX, clientY: event.clientY }
+
+      try {
+        await importImagePayloadToCanvas(await fileToImageImportPayload(file), position)
+      } catch (error) {
+        console.error('[excalibur] handleCanvasImageDrop: FAILED', error)
+        setExcalidrawMessage('Drop a PNG, JPEG, or WebP image to import it.')
+      }
+    },
+    [importImagePayloadToCanvas],
+  )
+
+  useEffect(() => {
+    let isActive = true
+    let unlisten: (() => void) | null = null
+    const currentWindow = getCurrentWindow()
+
+    currentWindow
+      .onDragDropEvent(async (event) => {
+        if (!isActive || event.payload.type !== 'drop') {
+          return
+        }
+
+        const imagePath = event.payload.paths.find(isSupportedImagePath)
+        if (!imagePath) {
+          return
+        }
+
+        const scaleFactor = await currentWindow.scaleFactor().catch(() => window.devicePixelRatio || 1)
+        const logicalPosition = event.payload.position.toLogical(scaleFactor)
+        const position = {
+          clientX: logicalPosition.x,
+          clientY: logicalPosition.y,
+        }
+
+        if (!isClientPointInCanvasFrame(position)) {
+          return
+        }
+
+        await importNativeImagePath(imagePath, position)
+      })
+      .then((cleanup) => {
+        if (!isActive) {
+          cleanup()
+          return
+        }
+        unlisten = cleanup
+      })
+
+    return () => {
+      isActive = false
+      unlisten?.()
+    }
+  }, [importNativeImagePath, isClientPointInCanvasFrame])
 
   // Listen for open-file events from the backend (file association / deep-link)
   useEffect(() => {
@@ -930,8 +1178,9 @@ function App() {
     setMermaidName(nextName)
     setMermaidPersistedState(mermaidText, nextName, response.path)
     setMermaidMessage(`Saved to ${response.path}.`)
+    popSaveButton('mermaid')
     refreshRecents()
-  }, [mermaidName, mermaidPath, mermaidText, refreshRecents, setMermaidPersistedState])
+  }, [mermaidName, mermaidPath, mermaidText, popSaveButton, refreshRecents, setMermaidPersistedState])
 
   const loadMermaidPath = useCallback(async (path: string) => {
     if (!confirmMermaidAction('load another document')) {
@@ -1149,21 +1398,16 @@ function App() {
                 />
               </label>
               <div className="actions">
-                <button className="primary" onClick={handleSaveExcalidraw}>
+                <button
+                  className={`primary save-button${getSaveButtonPopClass(saveButtonPop.excalidraw)}`}
+                  onClick={handleSaveExcalidraw}
+                >
                   Save
                 </button>
                 <button onClick={handleOpenExcalidraw}>Open</button>
                 <button onClick={handleNewExcalidraw}>New</button>
-                <label className="checkbox-control">
-                  <input
-                    type="checkbox"
-                    checked={exportTransparentBackground}
-                    onChange={(event) => setExportTransparentBackground(event.target.checked)}
-                  />
-                  Transparent background
-                </label>
-                <button onClick={handleExportExcalidrawPng} disabled={!excalidrawApi || isExportingPng}>
-                  {isExportingPng ? 'Exporting...' : 'Export PNG'}
+                <button onClick={handleExportExcalidrawPng} disabled={!excalidrawApi}>
+                  Export PNG
                 </button>
                 {recoverableAutosave ? (
                   <button className="recover" onClick={handleRecoverExcalidraw}>
@@ -1172,7 +1416,12 @@ function App() {
                 ) : null}
               </div>
             </div>
-            <div className="canvas-frame">
+            <div
+              ref={canvasFrameRef}
+              className="canvas-frame"
+              onDragOverCapture={handleCanvasImageDragOver}
+              onDropCapture={handleCanvasImageDrop}
+            >
               <Excalidraw excalidrawAPI={setExcalidrawApi} onChange={handleExcalidrawChange} />
             </div>
           </section>
@@ -1203,7 +1452,10 @@ function App() {
                 <input value={mermaidPath ?? ''} readOnly placeholder="No file loaded" />
               </label>
               <div className="actions">
-                <button className="primary" onClick={handleSaveMermaid}>
+                <button
+                  className={`primary save-button${getSaveButtonPopClass(saveButtonPop.mermaid)}`}
+                  onClick={handleSaveMermaid}
+                >
                   Save
                 </button>
                 <button onClick={handleOpenMermaid}>Open</button>
