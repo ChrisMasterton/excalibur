@@ -1,22 +1,33 @@
 # Excalibur
 
-A native macOS/Linux desktop app for viewing and editing [Excalidraw](https://excalidraw.com) drawings. Built with Tauri 2, React, and the Excalidraw component.
+A native macOS, Linux, and Windows desktop app for viewing and editing [Excalidraw](https://excalidraw.com) drawings. Built with Tauri 2, React, and the Excalidraw component.
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+
 - [Rust](https://rustup.rs/)
 - Tauri CLI: `cargo install tauri-cli --locked`
+- Windows only: Microsoft C++ Build Tools and Microsoft Edge WebView2 runtime
 
 ## Getting Started
 
 ### Install & Build
 
+macOS/Linux:
+
 ```bash
 ./install.sh
 ```
 
-This will check prerequisites, install frontend dependencies, build the app, and install it to `/Applications` (macOS) or `~/.local/bin` (Linux).
+Windows PowerShell:
+
+```powershell
+.\install.ps1
+```
+
+If PowerShell blocks local scripts, run `powershell -ExecutionPolicy Bypass -File .\install.ps1` from the repo root.
+
+These scripts check prerequisites, install frontend dependencies, build the app, and install it to `/Applications` (macOS), `~/.local/bin` (Linux), or the Windows installer/default local app directory.
 
 ### Development
 
@@ -33,6 +44,12 @@ cd src-tauri && cargo tauri dev   # run the app in dev mode
 
 Opens the built `.app` bundle from `src-tauri/target/release/bundle/macos/`.
 
+On Windows:
+
+```powershell
+.\run.ps1
+```
+
 ## Mermaid CLI Conversion
 
 Excalibur includes an mmdc-like command for rendering Mermaid files without installing Mermaid CLI:
@@ -41,7 +58,7 @@ Excalibur includes an mmdc-like command for rendering Mermaid files without inst
 cd frontend
 npm install
 npm run mmdc:install   # first time only; installs Chromium for Playwright
-npm --silent run mmdc -- -i docs/registration-auth-flow.md -o /tmp/registration-auth-flow.md
+npm --silent run mmdc -- -i docs/registration-auth-flow.md -o registration-auth-flow.md
 npm --silent run mmdc -- -i flow.mmd -o flow.svg
 ```
 
@@ -60,6 +77,8 @@ frontend/       React + Vite frontend (Excalidraw, Mermaid)
 src-tauri/      Tauri 2 backend (Rust)
 install.sh      Build & install script
 run.sh          Launch a release build
+install.ps1     Windows build & install script
+run.ps1         Windows launch script
 ```
 
 ## License

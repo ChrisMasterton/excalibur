@@ -139,7 +139,7 @@ install_app() {
         cp -R "$BUNDLE_PATH" "$INSTALL_DIR/"
         success "Installed to $INSTALL_DIR/$APP_NAME"
     elif [ "$PLATFORM" = "linux" ]; then
-        BINARY_PATH="src-tauri/target/release/excalibur"
+        BINARY_PATH="src-tauri/target/release/excalibur-tauri"
         DEB_PATH=$(find src-tauri/target/release/bundle/deb -name "*.deb" 2>/dev/null | head -1)
         APPIMAGE_PATH=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" 2>/dev/null | head -1)
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import os from 'node:os'
 import path from 'node:path'
 
 import {
@@ -79,9 +80,9 @@ test('replaceMarkdownBlocks preserves surrounding markdown', () => {
 })
 
 test('getSvgPathForMarkdown mirrors mmdc markdown sidecar SVG naming', () => {
-  const outputPath = path.join('/tmp', 'registration-auth-flow.md')
+  const outputPath = path.join(os.tmpdir(), 'registration-auth-flow.md')
   const svgPath = getSvgPathForMarkdown(outputPath, 2)
 
-  assert.equal(svgPath, path.join('/tmp', 'registration-auth-flow-2.svg'))
+  assert.equal(svgPath, path.join(os.tmpdir(), 'registration-auth-flow-2.svg'))
   assert.equal(getMarkdownImageReference(outputPath, svgPath, 2), '![Mermaid diagram 2](registration-auth-flow-2.svg)')
 })

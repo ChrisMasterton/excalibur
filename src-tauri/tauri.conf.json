@@ -4,8 +4,14 @@
   "version": "0.1.0",
   "identifier": "com.excalibur.canvas",
   "build": {
-    "beforeDevCommand": "cd \"$(git rev-parse --show-toplevel)/frontend\" && npm run dev -- --host",
-    "beforeBuildCommand": "cd \"$(git rev-parse --show-toplevel)/frontend\" && npm run build",
+    "beforeDevCommand": {
+      "script": "npm run dev -- --host",
+      "cwd": "../frontend"
+    },
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../frontend"
+    },
     "devUrl": "http://localhost:5200",
     "frontendDist": "../frontend/dist"
   },
