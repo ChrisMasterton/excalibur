@@ -1,3 +1,11 @@
+:root {
+  --motion-fast: 160ms;
+  --motion-standard: 200ms;
+  --motion-spatial: 240ms;
+  --ease-standard: ease;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
 .app-shell {
   --sidebar-width: 280px;
   --sidebar-return-tab-width: 32px;
@@ -5,7 +13,6 @@
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   min-height: 100vh;
   color: #0d0f12;
-  transition: grid-template-columns 0.24s ease;
 }
 
 .app-shell.sidebar-collapsed {
@@ -24,7 +31,8 @@
   overflow: hidden;
   position: relative;
   z-index: 2;
-  transition: opacity 0.2s ease, transform 0.24s ease;
+  transition: opacity var(--motion-standard) var(--ease-out),
+    transform var(--motion-spatial) var(--ease-out);
 }
 
 .sidebar-collapsed .sidebar {
@@ -67,8 +75,8 @@
   padding: 8px 10px;
 }
 
-.sidebar-hide:hover,
-.sidebar-return:hover {
+.sidebar-hide:focus-visible,
+.sidebar-return:focus-visible {
   background: #f7c36f;
   color: #1b1b1b;
   border-color: transparent;
@@ -90,7 +98,9 @@
   pointer-events: none;
   transform: translateX(-100%);
   white-space: nowrap;
-  transition: color 0.16s ease, opacity 0.2s ease, transform 0.24s ease;
+  transition: color var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-standard) var(--ease-out),
+    transform var(--motion-spatial) var(--ease-out);
 }
 
 .sidebar-collapsed .sidebar-return {
@@ -100,7 +110,6 @@
   transform: translateX(calc(-100% + var(--sidebar-return-tab-width)));
 }
 
-.sidebar-collapsed .sidebar-return:hover,
 .sidebar-collapsed .sidebar-return:focus-visible {
   color: #1b1b1b;
   transform: translateX(0);
@@ -119,14 +128,21 @@
   color: inherit;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transform: scale(1);
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-out);
 }
 
-.tab-button.active,
-.tab-button:hover {
+.tab-button.active {
   background: #f7c36f;
   color: #1b1b1b;
   border-color: transparent;
+}
+
+.tab-button:active {
+  transform: scale(0.97);
 }
 
 .recents {
@@ -157,12 +173,16 @@
   cursor: pointer;
   display: grid;
   gap: 4px;
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  --button-lift: 0px;
+  --button-scale: 1;
+  transform: translateY(var(--button-lift)) scale(var(--button-scale));
+  transition: border-color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-out);
 }
 
-.recent-item:hover {
-  transform: translateY(-1px);
-  border-color: rgba(247, 195, 111, 0.8);
+.recent-item:active {
+  --button-lift: 0px;
+  --button-scale: 0.97;
 }
 
 .recent-type {
@@ -250,6 +270,21 @@
   font-weight: 600;
 }
 
+.status-message,
+.status-note {
+  animation: status-fade-in var(--motion-fast) var(--ease-out);
+}
+
+@keyframes status-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 .control-row {
   display: flex;
   flex-wrap: wrap;
@@ -312,7 +347,10 @@
   cursor: pointer;
   background: #1b1b1b;
   color: #fef7e8;
-  transition: transform 0.2s ease;
+  --button-lift: 0px;
+  --button-scale: 1;
+  transform: translateY(var(--button-lift)) scale(var(--button-scale));
+  transition: transform var(--motion-fast) var(--ease-out);
 }
 
 .actions button.primary {
@@ -320,72 +358,32 @@
   color: #1b1b1b;
 }
 
-.actions button.save-button {
-  transform-origin: center;
-}
-
-.actions button.save-pop-odd,
-.actions button.save-pop-even {
-  animation-duration: 360ms;
-  animation-timing-function: cubic-bezier(0.2, 1.7, 0.35, 1);
-}
-
-.actions button.save-pop-odd {
-  animation-name: save-pop-odd;
-}
-
-.actions button.save-pop-even {
-  animation-name: save-pop-even;
-}
-
-@keyframes save-pop-odd {
-  0% {
-    transform: scale(1);
-    box-shadow: 0 0 0 rgba(247, 195, 111, 0);
-  }
-
-  42% {
-    transform: scale(1.08);
-    box-shadow: 0 8px 18px rgba(247, 195, 111, 0.38);
-  }
-
-  100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 rgba(247, 195, 111, 0);
-  }
-}
-
-@keyframes save-pop-even {
-  0% {
-    transform: scale(1);
-    box-shadow: 0 0 0 rgba(247, 195, 111, 0);
-  }
-
-  42% {
-    transform: scale(1.08);
-    box-shadow: 0 8px 18px rgba(247, 195, 111, 0.38);
-  }
-
-  100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 rgba(247, 195, 111, 0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .actions button.save-pop-odd,
-  .actions button.save-pop-even {
-    animation-duration: 1ms;
-  }
+.actions button.save-feedback {
+  --button-scale: 1.03;
 }
 
 .actions button.recover {
   background: #d7f3e5;
   color: #0d4f30;
+  transition: display var(--motion-fast) allow-discrete,
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
-.actions button:hover {
-  transform: translateY(-1px);
+.actions button.recover:not(.is-available) {
+  display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .actions button.recover.is-available {
+    opacity: 0;
+  }
+}
+
+.actions button:not(:disabled):active {
+  --button-lift: 0px;
+  --button-scale: 0.97;
 }
 
 .actions button:disabled {
@@ -393,8 +391,48 @@
   cursor: default;
 }
 
-.actions button:disabled:hover {
-  transform: none;
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-hide:hover,
+  .sidebar-return:hover {
+    background: #f7c36f;
+    color: #1b1b1b;
+    border-color: transparent;
+  }
+
+  .sidebar-collapsed .sidebar-return:hover {
+    color: #1b1b1b;
+    transform: translateX(0);
+  }
+
+  .tab-button:hover {
+    background: #f7c36f;
+    color: #1b1b1b;
+    border-color: transparent;
+  }
+
+  .recent-item:hover {
+    --button-lift: -1px;
+    border-color: rgba(247, 195, 111, 0.8);
+  }
+
+  .actions button:not(:disabled):hover {
+    --button-lift: -1px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebar-return,
+  .recent-item,
+  .tab-button,
+  .actions button {
+    transition-duration: 1ms;
+  }
+
+  .status-message,
+  .status-note {
+    animation-duration: 1ms;
+  }
 }
 
 .canvas-frame {

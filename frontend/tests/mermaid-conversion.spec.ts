@@ -225,7 +225,7 @@ test('warns before exiting from a native close request with unsaved Excalidraw c
   expect(mockState.exitCount).toBe(1)
 })
 
-test('pops the Save button after saving Mermaid text', async ({ page }) => {
+test('shows compositor-safe Save feedback after saving Mermaid text', async ({ page }) => {
   await page.goto('/')
 
   await page.getByRole('button', { name: 'Mermaid' }).click()
@@ -236,7 +236,9 @@ test('pops the Save button after saving Mermaid text', async ({ page }) => {
   await saveButton.click()
 
   await expect(page.getByText('Saved to /mock/pulse-flow.mmd.')).toBeVisible()
-  await expect(saveButton).toHaveClass(/save-pop-/)
+  await expect(saveButton).toHaveClass(/save-feedback/)
+  await expect(saveButton).toHaveCSS('animation-name', 'none')
+  await expect(saveButton).toHaveCSS('transition-property', 'transform')
 
   const mockState = await page.evaluate(() => window.__PLAYWRIGHT_TAURI_MOCK__) as MockState
   expect(mockState.savedFiles['/mock/pulse-flow.mmd']).toBe(mermaidSource)
@@ -247,6 +249,8 @@ test('collapses the sidebar and opens Excalidraw image export', async ({ page })
 
   await page.getByRole('button', { name: 'Hide sidebar' }).click()
   await expect(page.locator('.app-shell')).toHaveClass(/sidebar-collapsed/)
+  await expect(page.locator('.app-shell')).toHaveCSS('transition-property', 'all')
+  await expect(page.locator('.app-shell')).toHaveCSS('transition-duration', '0s')
 
   const sidebarReturn = page.getByRole('button', { name: 'Show sidebar' })
   await expect(sidebarReturn).toHaveCSS('background-color', 'rgb(247, 195, 111)')
@@ -301,6 +305,27 @@ test('collapses the sidebar and opens Excalidraw image export', async ({ page })
   const mockState = await page.evaluate(() => window.__PLAYWRIGHT_TAURI_MOCK__) as MockState
 
   expect(mockState.invocations.map((call) => call.cmd)).not.toContain('save_png_file')
+})
+
+test('uses explicit motion properties and honors reduced motion', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/')
+
+  const tabButton = page.getByRole('button', { name: 'Mermaid' })
+  await expect(tabButton).not.toHaveCSS('transition-property', 'all')
+  await expect(tabButton).toHaveCSS('transition-duration', '0.001s')
+  await tabButton.click()
+
+  await page.getByRole('button', { name: 'Hide sidebar' }).click()
+  await expect(page.locator('.sidebar')).toHaveCSS('transition-duration', '0.001s')
+
+  await page.getByLabel('Name').fill('accessible-flow')
+  await page.locator('.mermaid-editor textarea').fill(mermaidSource)
+  await page.getByRole('button', { name: /^Save$/ }).click()
+
+  const status = page.getByRole('status')
+  await expect(status).toHaveAttribute('aria-live', 'polite')
+  await expect(status.locator('.status-message')).toHaveCSS('animation-duration', '0.001s')
 })
 
 test('imports dropped image files into the Excalidraw canvas', async ({ page }) => {

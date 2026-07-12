@@ -137,19 +137,13 @@ type SaveButtonKind = 'excalidraw' | 'mermaid'
 const EXCALIDRAW_AUTOSAVE_KEY = 'excalibur.excalidraw.autosave.current'
 const EXCALIDRAW_RECOVERY_KEY = 'excalibur.excalidraw.autosave.recovery'
 const INITIAL_MERMAID_TEXT = 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Ship it]\n  B -->|No| D[Refine]'
+const SAVE_FEEDBACK_HOLD_MS = 100
 const SUPPORTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const IMAGE_IMPORT_MIME_BY_EXTENSION: Record<string, string> = {
   jpeg: 'image/jpeg',
   jpg: 'image/jpeg',
   png: 'image/png',
   webp: 'image/webp',
-}
-
-function getSaveButtonPopClass(popCount: number) {
-  if (popCount === 0) {
-    return ''
-  }
-  return popCount % 2 === 0 ? ' save-pop-even' : ' save-pop-odd'
 }
 
 function normalizeExcalidrawName(name?: string | null) {
@@ -288,9 +282,13 @@ function App() {
   const [tab, setTab] = useState<'excalidraw' | 'mermaid'>('excalidraw')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [recents, setRecents] = useState<RecentItem[]>([])
-  const [saveButtonPop, setSaveButtonPop] = useState<Record<SaveButtonKind, number>>({
-    excalidraw: 0,
-    mermaid: 0,
+  const [saveButtonFeedback, setSaveButtonFeedback] = useState<Record<SaveButtonKind, boolean>>({
+    excalidraw: false,
+    mermaid: false,
+  })
+  const saveFeedbackTimersRef = useRef<Record<SaveButtonKind, number | null>>({
+    excalidraw: null,
+    mermaid: null,
   })
 
   const setExcalidrawApi = useCallback((api: ExcalidrawImperativeAPI | null) => {
@@ -298,11 +296,24 @@ function App() {
     setExcalidrawApiInternal(api)
   }, [])
 
-  const popSaveButton = useCallback((kind: SaveButtonKind) => {
-    setSaveButtonPop((current) => ({
+  const showSaveButtonFeedback = useCallback((kind: SaveButtonKind) => {
+    const activeTimer = saveFeedbackTimersRef.current[kind]
+    if (activeTimer !== null) {
+      window.clearTimeout(activeTimer)
+    }
+
+    setSaveButtonFeedback((current) => ({
       ...current,
-      [kind]: current[kind] + 1,
+      [kind]: true,
     }))
+
+    saveFeedbackTimersRef.current[kind] = window.setTimeout(() => {
+      setSaveButtonFeedback((current) => ({
+        ...current,
+        [kind]: false,
+      }))
+      saveFeedbackTimersRef.current[kind] = null
+    }, SAVE_FEEDBACK_HOLD_MS)
   }, [])
 
   const [excalidrawPath, setExcalidrawPath] = useState<string | null>(null)
@@ -334,7 +345,13 @@ function App() {
 
   useEffect(() => {
     console.log('[excalibur] App mounted')
+    const saveFeedbackTimers = saveFeedbackTimersRef.current
     return () => {
+      for (const timer of Object.values(saveFeedbackTimers)) {
+        if (timer !== null) {
+          window.clearTimeout(timer)
+        }
+      }
       if (suppressEmptyChangeTimerRef.current !== null) {
         window.clearTimeout(suppressEmptyChangeTimerRef.current)
       }
@@ -346,14 +363,7 @@ function App() {
     if (!excalidrawApi) {
       return
     }
-
-    const refreshTimer = window.setTimeout(() => {
-      excalidrawApi.refresh()
-    }, 260)
-
-    return () => {
-      window.clearTimeout(refreshTimer)
-    }
+    excalidrawApi.refresh()
   }, [excalidrawApi, isSidebarCollapsed])
 
   useEffect(() => {
@@ -834,13 +844,13 @@ function App() {
     }
     setExcalidrawPersistedState(snapshot, response.path, nextName)
     setExcalidrawMessage(`Saved to ${response.path}.`)
-    popSaveButton('excalidraw')
+    showSaveButtonFeedback('excalidraw')
     refreshRecents()
   }, [
     excalidrawApi,
     excalidrawName,
     excalidrawPath,
-    popSaveButton,
+    showSaveButtonFeedback,
     refreshRecents,
     setCurrentExcalidrawAutosave,
     setExcalidrawDocument,
@@ -1178,9 +1188,9 @@ function App() {
     setMermaidName(nextName)
     setMermaidPersistedState(mermaidText, nextName, response.path)
     setMermaidMessage(`Saved to ${response.path}.`)
-    popSaveButton('mermaid')
+    showSaveButtonFeedback('mermaid')
     refreshRecents()
-  }, [mermaidName, mermaidPath, mermaidText, popSaveButton, refreshRecents, setMermaidPersistedState])
+  }, [mermaidName, mermaidPath, mermaidText, refreshRecents, setMermaidPersistedState, showSaveButtonFeedback])
 
   const loadMermaidPath = useCallback(async (path: string) => {
     if (!confirmMermaidAction('load another document')) {
@@ -1363,8 +1373,10 @@ function App() {
                 <h1>Excalidraw editor</h1>
                 <p>Open, edit, and save .excalidraw files.</p>
               </div>
-              <div className="status">
-                {excalidrawMessage}
+              <div className="status" role="status" aria-live="polite">
+                {excalidrawMessage ? (
+                  <span key={excalidrawMessage} className="status-message">{excalidrawMessage}</span>
+                ) : null}
                 {recoverableAutosave ? <span className="status-note">Autosave backup available.</span> : null}
               </div>
             </header>
@@ -1399,7 +1411,7 @@ function App() {
               </label>
               <div className="actions">
                 <button
-                  className={`primary save-button${getSaveButtonPopClass(saveButtonPop.excalidraw)}`}
+                  className={`primary save-button${saveButtonFeedback.excalidraw ? ' save-feedback' : ''}`}
                   onClick={handleSaveExcalidraw}
                 >
                   Save
@@ -1409,11 +1421,15 @@ function App() {
                 <button onClick={handleExportExcalidrawPng} disabled={!excalidrawApi}>
                   Export PNG
                 </button>
-                {recoverableAutosave ? (
-                  <button className="recover" onClick={handleRecoverExcalidraw}>
-                    Recover backup
-                  </button>
-                ) : null}
+                <button
+                  className={`recover${recoverableAutosave ? ' is-available' : ''}`}
+                  onClick={handleRecoverExcalidraw}
+                  disabled={!recoverableAutosave}
+                  aria-hidden={!recoverableAutosave}
+                  tabIndex={recoverableAutosave ? 0 : -1}
+                >
+                  Recover backup
+                </button>
               </div>
             </div>
             <div
@@ -1432,7 +1448,11 @@ function App() {
                 <h1>Mermaid editor</h1>
                 <p>Write Mermaid syntax and render instantly.</p>
               </div>
-              <div className="status">{mermaidMessage}</div>
+              <div className="status" role="status" aria-live="polite">
+                {mermaidMessage ? (
+                  <span key={mermaidMessage} className="status-message">{mermaidMessage}</span>
+                ) : null}
+              </div>
             </header>
             <div className="control-row">
               <label className="field-control field-control-name">
@@ -1453,7 +1473,7 @@ function App() {
               </label>
               <div className="actions">
                 <button
-                  className={`primary save-button${getSaveButtonPopClass(saveButtonPop.mermaid)}`}
+                  className={`primary save-button${saveButtonFeedback.mermaid ? ' save-feedback' : ''}`}
                   onClick={handleSaveMermaid}
                 >
                   Save
