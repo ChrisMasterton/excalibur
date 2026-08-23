@@ -18,6 +18,9 @@
   --sidebar-ink-faint: rgba(254, 247, 232, 0.4);
   --sidebar-line: rgba(254, 247, 232, 0.12);
   --danger: #b42318;
+  /* Symbol highlight: deep amber so it reads as "found", not as an error. */
+  --highlight-stroke: #b97b0e;
+  --highlight-glow: rgba(247, 195, 111, 0.75);
 }
 
 /* ---------------------------------------------------------------------------
@@ -496,6 +499,7 @@
 .projects-panel {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .add-project {
@@ -550,6 +554,163 @@
 
 .project-files .empty {
   margin-left: 18px;
+}
+
+
+/* Find in project ----------------------------------------------------------- */
+
+.project-search {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.project-search-field .icon {
+  position: absolute;
+  left: 10px;
+  color: var(--sidebar-ink-faint);
+  pointer-events: none;
+}
+
+.project-search-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 30px 9px 32px;
+  border-radius: 10px;
+  border: 1px solid var(--sidebar-line);
+  background: rgba(254, 247, 232, 0.06);
+  color: var(--sidebar-ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.project-search-field input::placeholder {
+  color: var(--sidebar-ink-faint);
+}
+
+.project-search-field input::-webkit-search-cancel-button,
+.project-search-field input::-webkit-search-decoration {
+  appearance: none;
+  display: none;
+}
+
+.project-search-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.project-search-clear {
+  position: absolute;
+  right: 4px;
+  color: var(--sidebar-ink-soft);
+}
+
+.project-search-status {
+  font-size: 12px;
+  color: var(--sidebar-ink-faint);
+  padding: 0 4px;
+}
+
+.symbol-results {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.symbol-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sidebar-ink-faint);
+  padding: 0 4px;
+}
+
+.symbol-entry {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.symbol-entry-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 4px;
+}
+
+.symbol-entry-name {
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.symbol-entry-hint {
+  font-size: 11px;
+  color: var(--sidebar-ink-faint);
+  white-space: nowrap;
+}
+
+.symbol-hit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-left: 12px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: var(--sidebar-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard);
+}
+
+.symbol-hit:hover {
+  background: rgba(254, 247, 232, 0.08);
+  border-color: rgba(254, 247, 232, 0.14);
+}
+
+.symbol-hit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.symbol-hit.is-active {
+  background: rgba(247, 195, 111, 0.14);
+  border-color: rgba(247, 195, 111, 0.35);
+}
+
+.symbol-hit-icon {
+  flex: none;
+  color: var(--sidebar-ink-soft);
+}
+
+.symbol-hit-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.symbol-hit-count {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--sidebar-ink-faint);
 }
 
 /* Editable titles ----------------------------------------------------------- */
@@ -1044,6 +1205,42 @@
   max-width: none;
 }
 
+
+/* A "Find in project" hit, marked on the rendered Mermaid node. Mermaid styles
+   its own shapes from an id-scoped <style> block, so these have to shout. */
+.diagram .symbol-highlight,
+.diagram .symbol-highlight rect,
+.diagram .symbol-highlight circle,
+.diagram .symbol-highlight ellipse,
+.diagram .symbol-highlight polygon,
+.diagram .symbol-highlight path,
+.diagram .symbol-highlight line {
+  stroke: var(--highlight-stroke) !important;
+  stroke-width: 2px !important;
+}
+
+.diagram .symbol-highlight text,
+.diagram .symbol-highlight tspan,
+.diagram text.symbol-highlight,
+.diagram tspan.symbol-highlight {
+  fill: var(--highlight-stroke) !important;
+  font-weight: 700;
+}
+
+.diagram .symbol-highlight {
+  filter: drop-shadow(0 0 5px var(--highlight-glow));
+  animation: symbol-highlight-pulse var(--motion-spatial) var(--ease-out);
+}
+
+@keyframes symbol-highlight-pulse {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .zoom-pan-controls {
   position: absolute;
   right: 12px;
@@ -1254,13 +1451,15 @@
   .panel-tab,
   .icon-button,
   .editable-title,
-  .add-project {
+  .add-project,
+  .symbol-hit {
     transition-duration: 1ms;
   }
 
   .status-message,
   .status-note,
-  .context-menu {
+  .context-menu,
+  .diagram .symbol-highlight {
     animation-duration: 1ms;
   }
 }

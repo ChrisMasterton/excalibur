@@ -11,11 +11,18 @@ import {
 } from 'react'
 import { IconButton } from './IconButton'
 
+/** A box in the content's own (unscaled) coordinate space. */
+export type ContentRect = { x: number; y: number; width: number; height: number }
+
 export type ZoomPanHandle = {
   fit: () => void
   reset: () => void
   zoomIn: () => void
   zoomOut: () => void
+  /** Centres a box of the content, zooming out only far enough to make it fit. */
+  focusRect: (rect: ContentRect) => void
+  /** `focusRect` for one or more rendered elements, measured through the current transform. */
+  focusElement: (element: Element | readonly Element[]) => void
 }
 
 type Transform = { scale: number; x: number; y: number }
@@ -147,6 +154,64 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
     })
   }, [fitPadding, setTransform])
 
+  /** Centres `rect` (content coordinates), keeping the current zoom unless it would not fit. */
+  const focusRect = useCallback(
+    (rect: ContentRect) => {
+      const viewport = viewportRef.current
+      if (!viewport || rect.width <= 0 || rect.height <= 0) {
+        return
+      }
+      const viewportWidth = viewport.clientWidth
+      const viewportHeight = viewport.clientHeight
+      if (!viewportWidth || !viewportHeight) {
+        return
+      }
+      const fitScale = Math.min(
+        (viewportWidth - fitPadding * 2) / rect.width,
+        (viewportHeight - fitPadding * 2) / rect.height,
+      )
+      const scale = clamp(Math.min(transformRef.current.scale, fitScale), minScale, maxScale)
+      autoFitRef.current = false
+      setTransform({
+        scale,
+        x: viewportWidth / 2 - (rect.x + rect.width / 2) * scale,
+        y: viewportHeight / 2 - (rect.y + rect.height / 2) * scale,
+      })
+    },
+    [fitPadding, maxScale, minScale, setTransform],
+  )
+
+  /** Converts rendered elements' screen boxes back into content coordinates, then focuses them. */
+  const focusElement = useCallback(
+    (element: Element | readonly Element[]) => {
+      const content = contentRef.current
+      const elements = Array.isArray(element) ? element : [element as Element]
+      if (!content || !elements.length) {
+        return
+      }
+      const contentBox = content.getBoundingClientRect()
+      let left = Number.POSITIVE_INFINITY
+      let top = Number.POSITIVE_INFINITY
+      let right = Number.NEGATIVE_INFINITY
+      let bottom = Number.NEGATIVE_INFINITY
+      for (const item of elements) {
+        const box = item.getBoundingClientRect()
+        left = Math.min(left, box.left)
+        top = Math.min(top, box.top)
+        right = Math.max(right, box.right)
+        bottom = Math.max(bottom, box.bottom)
+      }
+      const { scale } = transformRef.current
+      focusRect({
+        x: (left - contentBox.left) / scale,
+        y: (top - contentBox.top) / scale,
+        width: (right - left) / scale,
+        height: (bottom - top) / scale,
+      })
+    },
+    [focusRect],
+  )
+
   useImperativeHandle(
     ref,
     () => ({
@@ -154,8 +219,10 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       reset,
       zoomIn: () => zoomAround(zoomStep),
       zoomOut: () => zoomAround(1 / zoomStep),
+      focusRect,
+      focusElement,
     }),
-    [fit, reset, zoomAround, zoomStep],
+    [fit, focusElement, focusRect, reset, zoomAround, zoomStep],
   )
 
   // Re-fit whenever the content is replaced, unless the user has taken control.

@@ -8,6 +8,8 @@ type UseKeyboardShortcutsOptions = {
   getCycleTargetId: (step: number) => string | null
   getDocumentIdAt: (index: number) => string | null
   openSettings: () => void
+  /** Escape drops any "Find in project" highlight. */
+  onClearHighlight: () => void
   onSaveExcalidraw: () => void
   onOpenExcalidraw: () => void
   onSaveMermaid: () => void
@@ -22,6 +24,7 @@ export function useKeyboardShortcuts({
   getCycleTargetId,
   getDocumentIdAt,
   openSettings,
+  onClearHighlight,
   onSaveExcalidraw,
   onOpenExcalidraw,
   onSaveMermaid,
@@ -29,6 +32,10 @@ export function useKeyboardShortcuts({
 }: UseKeyboardShortcutsOptions) {
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClearHighlight()
+        return
+      }
       if (!(event.metaKey || event.ctrlKey) || event.altKey) {
         return
       }
@@ -87,6 +94,7 @@ export function useKeyboardShortcuts({
     closeActiveDocument,
     getCycleTargetId,
     getDocumentIdAt,
+    onClearHighlight,
     onOpenExcalidraw,
     onOpenMermaid,
     onSaveExcalidraw,

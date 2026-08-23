@@ -91,6 +91,9 @@ export function useExcalidrawDocument({
   const [recoverableAutosave, setRecoverableAutosave] = useState<ExcalidrawAutosave | null>(() =>
     readStoredExcalidrawAutosave(EXCALIDRAW_RECOVERY_KEY),
   )
+  /** Elements a "Find in project" hit asked us to select; `token` re-triggers a repeat request. */
+  const [highlight, setHighlight] = useState<{ elementIds: string[]; token: number } | null>(null)
+  const highlightTokenRef = useRef(0)
 
   const pendingFitToContentRef = useRef(false)
   const pendingContentsRef = useRef<ApplyExcalidrawContentsRequest | null>(null)
@@ -400,6 +403,52 @@ export function useExcalidrawDocument({
 
   const getLiveId = useCallback(() => liveIdRef.current, [])
 
+  /**
+   * Selects the given elements and zooms to them. Applied once the canvas is
+   * visible and sized, so it survives being called while Mermaid is on screen.
+   */
+  const highlightElements = useCallback((elementIds: string[]) => {
+    highlightTokenRef.current += 1
+    setHighlight(elementIds.length ? { elementIds, token: highlightTokenRef.current } : null)
+  }, [])
+
+  const clearHighlight = useCallback(() => {
+    setHighlight(null)
+    excalidrawApi?.updateScene({
+      appState: { selectedElementIds: {} },
+      captureUpdate: CaptureUpdateAction.NEVER,
+    })
+  }, [excalidrawApi])
+
+  useEffect(() => {
+    if (!excalidrawApi || !isVisible || !highlight) {
+      return
+    }
+    const wanted = new Set(highlight.elementIds)
+    const targets = excalidrawApi.getSceneElements().filter((element) => wanted.has(element.id))
+    if (!targets.length) {
+      return
+    }
+    excalidrawApi.updateScene({
+      appState: { selectedElementIds: Object.fromEntries(targets.map((element) => [element.id, true])) },
+      captureUpdate: CaptureUpdateAction.NEVER,
+    })
+    // The canvas learns its size from a ResizeObserver, so wait for real dimensions.
+    let attempts = 0
+    let timer = 0
+    const scrollWhenSized = () => {
+      const { width, height } = excalidrawApi.getAppState()
+      if ((width > 0 && height > 0) || attempts >= 20) {
+        excalidrawApi.scrollToContent(targets, { fitToContent: true, animate: true })
+        return
+      }
+      attempts += 1
+      timer = window.setTimeout(scrollWhenSized, 30)
+    }
+    scrollWhenSized()
+    return () => window.clearTimeout(timer)
+  }, [excalidrawApi, highlight, isVisible])
+
   /** Fit the canvas to its contents the next time it becomes visible. */
   const requestFitToContent = useCallback(() => {
     pendingFitToContentRef.current = true
@@ -557,6 +606,8 @@ export function useExcalidrawDocument({
     detachDocument,
     relocateDocument,
     clearRecoverableAutosave,
+    highlightElements,
+    clearHighlight,
     requestFitToContent,
     clearPendingContents,
     handleChange,

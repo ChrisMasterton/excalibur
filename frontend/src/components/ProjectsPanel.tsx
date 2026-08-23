@@ -2,9 +2,12 @@ import { useCallback, useEffect, useState, type MouseEvent } from 'react'
 import { api, errorMessage } from '../lib/tauri'
 import type { ProjectFile, ProjectItem } from '../types'
 import { useContextMenu } from '../hooks/useContextMenu'
+import type { SymbolIndexApi } from '../hooks/useSymbolIndex'
+import type { SymbolDocumentHit } from '../lib/symbolIndex'
 import { EditableTitle } from './EditableTitle'
 import { Icon } from './Icon'
 import { IconButton } from './IconButton'
+import { SymbolSearch } from './SymbolSearch'
 import { buildMoveToProjectItems, kindIcon } from '../lib/menus'
 
 const EXPANDED_STORAGE_KEY = 'excalibur.projects.expanded'
@@ -22,6 +25,9 @@ type ProjectsPanelProps = {
   /** Paths with an open tab; the active one gets a stronger highlight. */
   openPaths: Set<string>
   activePath: string | null
+  /** The project symbol index behind "Find in project". */
+  symbolIndex: SymbolIndexApi
+  onOpenSymbol: (hit: SymbolDocumentHit) => void
   onAddProject: () => void
   onRemoveProject: (project: ProjectItem) => void
   onRenameProject: (project: ProjectItem, name: string) => Promise<void>
@@ -47,6 +53,8 @@ export function ProjectsPanel({
   refreshToken,
   openPaths,
   activePath,
+  symbolIndex,
+  onOpenSymbol,
   onAddProject,
   onRemoveProject,
   onRenameProject,
@@ -129,6 +137,13 @@ export function ProjectsPanel({
 
   return (
     <div className="projects-panel">
+      <SymbolSearch
+        status={symbolIndex.status}
+        onEnsureIndex={symbolIndex.ensureIndex}
+        search={symbolIndex.search}
+        activePath={activePath}
+        onSelect={onOpenSymbol}
+      />
       <button type="button" className="add-project" onClick={onAddProject}>
         <Icon name="folder-plus" size={16} />
         <span>Add project folder…</span>

@@ -1,4 +1,5 @@
-import { useMemo, useRef, type KeyboardEvent } from 'react'
+import type { KeyboardEvent, RefObject } from 'react'
+import type { PinnedDiagram } from '../lib/mermaidSvg'
 import type { Settings } from '../lib/settings'
 import { DocumentToolbar } from './DocumentToolbar'
 import { IconButton } from './IconButton'
@@ -17,39 +18,21 @@ type MermaidWorkspaceProps = {
   isConverting: boolean
   editorCollapsed: boolean
   text: string
-  svg: string
+  /** The rendered preview SVG, pinned to its natural size by `useMermaidDocument`. */
+  diagram: PinnedDiagram
   error: string
+  /** Wraps the rendered SVG so the highlight pass can query it. */
+  previewRef: RefObject<HTMLDivElement | null>
+  viewportRef: RefObject<ZoomPanHandle | null>
   onRename: (name: string) => Promise<void>
   onOpen: () => void
   onSave: () => void
   onConvert: () => void
+  onExportPng: () => void
+  onPreviewPointerDown: () => void
   onToggleEditor: () => void
   onTextChange: (text: string) => void
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void
-}
-
-/**
- * Mermaid emits `width="100%"` plus a `max-width` style, which fights a
- * zoomable viewport. Pin the SVG to its natural viewBox size instead.
- */
-function pinSvgToNaturalSize(svg: string) {
-  if (!svg || typeof DOMParser === 'undefined') {
-    return { markup: svg, width: 0, height: 0 }
-  }
-  const document = new DOMParser().parseFromString(svg, 'image/svg+xml')
-  const root = document.documentElement
-  if (!root || root.nodeName !== 'svg') {
-    return { markup: svg, width: 0, height: 0 }
-  }
-  const viewBox = (root.getAttribute('viewBox') ?? '').split(/[\s,]+/).map(Number)
-  const width = viewBox.length === 4 && viewBox[2] > 0 ? viewBox[2] : Number(root.getAttribute('width')) || 0
-  const height = viewBox.length === 4 && viewBox[3] > 0 ? viewBox[3] : Number(root.getAttribute('height')) || 0
-  if (width && height) {
-    root.setAttribute('width', String(Math.ceil(width)))
-    root.setAttribute('height', String(Math.ceil(height)))
-    root.style.maxWidth = 'none'
-  }
-  return { markup: new XMLSerializer().serializeToString(root), width, height }
 }
 
 export function MermaidWorkspace({
@@ -64,18 +47,20 @@ export function MermaidWorkspace({
   isConverting,
   editorCollapsed,
   text,
-  svg,
+  diagram,
   error,
+  previewRef,
+  viewportRef,
   onRename,
   onOpen,
   onSave,
   onConvert,
+  onExportPng,
+  onPreviewPointerDown,
   onToggleEditor,
   onTextChange,
   onKeyDown,
 }: MermaidWorkspaceProps) {
-  const viewportRef = useRef<ZoomPanHandle | null>(null)
-  const diagram = useMemo(() => pinSvgToNaturalSize(svg), [svg])
   // Re-fit only when the diagram's footprint changes, so typing doesn't reset the zoom.
   const contentKey = `${Math.round(diagram.width)}x${Math.round(diagram.height)}`
 
@@ -100,11 +85,17 @@ export function MermaidWorkspace({
           icon="fit"
           label="Fit to window"
           onClick={() => viewportRef.current?.fit()}
-          disabled={!svg || Boolean(error)}
+          disabled={!diagram.markup || Boolean(error)}
         />
         <span className="toolbar-divider" />
         <IconButton icon="folder-open" label="Open Mermaid file" onClick={onOpen} />
         <IconButton icon="save" label="Save" primary feedback={saveFeedback} onClick={onSave} />
+        <IconButton
+          icon="image"
+          label="Export PNG"
+          onClick={onExportPng}
+          disabled={!diagram.markup || Boolean(error)}
+        />
         <span className="toolbar-divider" />
         <IconButton
           icon="convert"
@@ -125,7 +116,7 @@ export function MermaidWorkspace({
             onKeyDown={onKeyDown}
           />
         </div>
-        <div className="mermaid-preview">
+        <div className="mermaid-preview" onPointerDownCapture={onPreviewPointerDown}>
           {error ? <div className="error">{error}</div> : null}
           <ZoomPanViewport
             ref={viewportRef}
@@ -135,7 +126,7 @@ export function MermaidWorkspace({
             wheelAction={settings.previewWheelAction}
             maxFitScale={settings.previewFitUpscale ? 2 : 1}
           >
-            <div className="diagram" dangerouslySetInnerHTML={{ __html: diagram.markup }} />
+            <div ref={previewRef} className="diagram" dangerouslySetInnerHTML={{ __html: diagram.markup }} />
           </ZoomPanViewport>
         </div>
       </div>

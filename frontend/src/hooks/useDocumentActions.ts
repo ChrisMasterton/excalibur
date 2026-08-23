@@ -6,6 +6,7 @@ import type { ExcalidrawDocumentCache } from './useOpenDocuments'
 import { excalidrawSnapshotFromContents } from '../lib/documents'
 import { convertMermaidToExcalidrawScene } from '../lib/mermaidConvert'
 import { baseName } from '../lib/paths'
+import type { SymbolDocumentHit } from '../lib/symbolIndex'
 import { api, errorMessage } from '../lib/tauri'
 import type { OpenDocument } from '../types'
 
@@ -33,11 +34,19 @@ export function useDocumentActions({
   readExcalidrawCache,
   writeExcalidrawCache,
 }: UseDocumentActionsOptions) {
-  const { activateDocument, createDocument, createDocumentFrom, openLoadedFile, snapshotLiveDocuments } = tabs
+  const {
+    activateDocument,
+    createDocument,
+    createDocumentFrom,
+    openDiagramPath,
+    openLoadedFile,
+    snapshotLiveDocuments,
+  } = tabs
   const { setMessage: setExcalidrawMessage, releaseDocument: releaseExcalidrawDocument } = excalidraw
   const { setMessage: setMermaidMessage, setConverting } = mermaid
   const { clearRecoverableAutosave, recoverableAutosave, requestFitToContent, clearPendingContents } = excalidraw
-  const { prepareConversion } = mermaid
+  const { highlightElements: highlightExcalidrawElements } = excalidraw
+  const { prepareConversion, highlightSymbol: highlightMermaidSymbol } = mermaid
 
   const handleNewExcalidraw = useCallback(() => {
     activateDocument(createDocument('excalidraw').id, 'Started a new drawing.')
@@ -159,11 +168,52 @@ export function useDocumentActions({
     setMermaidMessage,
   ])
 
+  /**
+   * Opens (or re-activates) the document a "Find in project" hit points at and
+   * highlights the matches on it. Goes through the tab layer like any other open.
+   */
+  const revealSymbol = useCallback(
+    async (hit: SymbolDocumentHit) => {
+      const locators = hit.entries.flatMap((entry) => entry.locators)
+      const display = hit.entries[0]?.display ?? ''
+      try {
+        const document = await openDiagramPath(hit.doc.kind, hit.doc.path, { trackRecent: false })
+        if (hit.doc.kind === 'excalidraw') {
+          highlightExcalidrawElements(
+            locators.flatMap((locator) => (locator.target === 'excalidraw' ? [locator.elementId] : [])),
+          )
+          return
+        }
+        highlightMermaidSymbol(
+          document.id,
+          locators.filter((locator) => locator.target === 'mermaid'),
+          display,
+        )
+      } catch (error) {
+        console.error('[excalibur] unable to open symbol', hit.doc.path, error)
+        const message = errorMessage(error, `Unable to open ${baseName(hit.doc.path)}.`)
+        if (hit.doc.kind === 'excalidraw') {
+          setExcalidrawMessage(message)
+        } else {
+          setMermaidMessage(message)
+        }
+      }
+    },
+    [
+      highlightExcalidrawElements,
+      highlightMermaidSymbol,
+      openDiagramPath,
+      setExcalidrawMessage,
+      setMermaidMessage,
+    ],
+  )
+
   return {
     handleNewExcalidraw,
     handleOpenExcalidraw,
     handleOpenMermaid,
     handleRecoverExcalidraw,
     handleConvertMermaidToExcalidraw,
+    revealSymbol,
   }
 }

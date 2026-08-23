@@ -1,5 +1,13 @@
 # Release Notes
 
+## Find in project, and Mermaid PNG export - 2026-08-23
+- **Find in project**: a search field above the project list indexes every diagram in every registered project and groups what it finds by *symbol*, so the ER entity `USER`, the class `User`, and the sequence participant `User` are one entry with the documents that mention them.
+- Symbols come from Mermaid's own parser rather than a regex: class names and their members/methods, ER entities and attributes, sequence participants, flowchart nodes (id and label), and states. Excalidraw drawings are read from their text elements; drawings Excalibur converted carry the exact symbol on each shape.
+- Clicking a result opens or re-activates that document's tab and shows you the match - selected and zoomed-to on the Excalidraw canvas, outlined in the Mermaid preview. Escape or the next click in the preview clears it.
+- The index builds the first time the search box is used, one file at a time so the UI stays responsive, and re-reads only files whose timestamp has changed (including the one you just saved).
+- **Export PNG** in the Mermaid toolbar renders the preview at 2x on the paper background and saves it through a native dialog.
+- Mermaid labels are now drawn as plain SVG text everywhere (previously only flowcharts were), which is what makes the PNG export and the highlight pass work. Class and ER diagrams look slightly different as a result.
+
 ## Document tabs - 2026-08-23
 - Documents now open as **tabs**: Recent items, project files, drops, file associations, `Open…`, `New drawing`, and Mermaid conversions all add a tab instead of replacing the open document. Unsaved edits travel with their tab, so switching tabs never prompts.
 - Opening a file takes over an untouched blank tab instead of leaving an empty *Untitled* beside it, and *Recover backup* loads into the tab that already has that file rather than opening a second one.

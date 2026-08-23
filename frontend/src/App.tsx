@@ -20,11 +20,16 @@ import { useProjectActions } from './hooks/useProjectActions'
 import { useSaveFeedback } from './hooks/useSaveFeedback'
 import { useSettings } from './hooks/useSettings'
 import { useSidebarData } from './hooks/useSidebarData'
+import { useSymbolIndex } from './hooks/useSymbolIndex'
 import type { ProjectFile } from './types'
 
 function App() {
   const layout = useAppLayout()
   const sidebar = useSidebarData()
+  const symbolIndex = useSymbolIndex({
+    projects: sidebar.projects,
+    refreshToken: sidebar.projectsRefreshToken,
+  })
   const { settings, handleSettingsChange } = useSettings()
   const { saveButtonFeedback, showSaveFeedback } = useSaveFeedback()
 
@@ -78,6 +83,14 @@ function App() {
   const { getWorkspace } = layout
   const { setMessage: setExcalidrawMessage } = excalidraw
   const { setMessage: setMermaidMessage } = mermaid
+  const { clearHighlight: clearExcalidrawHighlight } = excalidraw
+  const { clearHighlight: clearMermaidHighlight } = mermaid
+
+  /** Escape drops the "Find in project" marks in whichever workspace has them. */
+  const clearHighlight = useCallback(() => {
+    clearExcalidrawHighlight()
+    clearMermaidHighlight()
+  }, [clearExcalidrawHighlight, clearMermaidHighlight])
 
   /** Status message for whichever workspace the user is looking at. */
   const notify = useCallback(
@@ -151,6 +164,7 @@ function App() {
     getCycleTargetId: tabs.getCycleTargetId,
     getDocumentIdAt: tabs.getDocumentIdAt,
     openSettings: layout.openSettings,
+    onClearHighlight: clearHighlight,
     onSaveExcalidraw: excalidraw.handleSave,
     onOpenExcalidraw: actions.handleOpenExcalidraw,
     onSaveMermaid: mermaid.handleSave,
@@ -188,6 +202,8 @@ function App() {
             refreshToken={sidebar.projectsRefreshToken}
             openPaths={openPaths}
             activePath={activePath}
+            symbolIndex={symbolIndex}
+            onOpenSymbol={(hit) => void actions.revealSymbol(hit)}
             onAddProject={() => void projectActions.handleAddProject()}
             onRemoveProject={(project) => void sidebar.removeProject(project)}
             onRenameProject={projectActions.handleRenameProject}
@@ -245,11 +261,15 @@ function App() {
           isConverting={mermaid.isConverting}
           editorCollapsed={layout.isMermaidEditorCollapsed}
           text={mermaid.text}
-          svg={mermaid.svg}
+          diagram={mermaid.diagram}
           error={mermaid.error}
+          previewRef={mermaid.previewRef}
+          viewportRef={mermaid.viewportRef}
           onRename={mermaid.handleRename}
           onOpen={() => void actions.handleOpenMermaid()}
           onSave={() => void mermaid.handleSave()}
+          onExportPng={() => void mermaid.handleExportPng()}
+          onPreviewPointerDown={clearMermaidHighlight}
           onConvert={() => void actions.handleConvertMermaidToExcalidraw()}
           onToggleEditor={layout.toggleMermaidEditor}
           onTextChange={mermaid.handleTextChange}

@@ -397,6 +397,7 @@ export function useDocumentTabs({
     createDocument,
     createDocumentFrom,
     openLoadedFile,
+    openDiagramPath,
     openDiagram,
     handleWorkspaceChange,
     closeDocumentIds,

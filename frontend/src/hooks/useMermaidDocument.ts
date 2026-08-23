@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react'
 import mermaid from 'mermaid'
+import type { ZoomPanHandle } from '../components/ZoomPanViewport'
 import { INITIAL_MERMAID_TEXT, mermaidHistoryReducer } from '../lib/mermaidHistory'
+import { applySymbolHighlight, clearSymbolHighlight } from '../lib/mermaidHighlight'
+import { initializeMermaid } from '../lib/mermaidSymbols'
+import type { SymbolLocator } from '../lib/symbols'
+import {
+  DIAGRAM_PAPER_BACKGROUND,
+  EMPTY_DIAGRAM,
+  pinSvgToNaturalSize,
+  renderDiagramToPngBytes,
+} from '../lib/mermaidSvg'
 import { parseMermaidTitle, titleToFileStem } from '../lib/mermaidTitle'
 import { baseName, dirName, fileStem } from '../lib/paths'
 import { api, errorMessage } from '../lib/tauri'
@@ -10,6 +20,15 @@ import type { DocumentPatch, MermaidDocumentCache } from './useOpenDocuments'
 type MermaidPersistedState = {
   path: string | null
   text: string
+}
+
+/** Which nodes of which tab a search hit wants marked. */
+export type MermaidHighlightRequest = {
+  documentId: string
+  locators: SymbolLocator[]
+  display: string
+  /** Bumped so asking for the same symbol twice still re-runs the pass. */
+  token: number
 }
 
 /** Everything the Excalidraw side needs to turn the live Mermaid source into a drawing. */
@@ -58,6 +77,17 @@ export function useMermaidDocument({
   const [svg, setSvg] = useState('')
   const [error, setError] = useState('')
   const [isConverting, setIsConverting] = useState(false)
+  // The preview SVG at its natural pixel size: shared by the viewport and the PNG export.
+  const diagram = useMemo(() => (svg ? pinSvgToNaturalSize(svg) : EMPTY_DIAGRAM), [svg])
+  const diagramRef = useRef(diagram)
+  const previewRef = useRef<HTMLDivElement | null>(null)
+  const viewportRef = useRef<ZoomPanHandle | null>(null)
+  /** A "Find in project" hit waiting for its document's SVG to be on screen. */
+  const [highlight, setHighlight] = useState<MermaidHighlightRequest | null>(null)
+
+  useEffect(() => {
+    diagramRef.current = diagram
+  }, [diagram])
 
   const pathRef = useRef<string | null>(null)
   const persistedRef = useRef<MermaidPersistedState>({ path: null, text: INITIAL_MERMAID_TEXT })
@@ -108,11 +138,8 @@ export function useMermaidDocument({
   }, [patchDocument, title])
 
   useEffect(() => {
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: 'neutral',
-      flowchart: { htmlLabels: false },
-    })
+    // Shared with the symbol index so the preview and the parser agree on config.
+    initializeMermaid()
   }, [])
 
   useEffect(() => {
@@ -163,6 +190,7 @@ export function useMermaidDocument({
         persistedText: INITIAL_MERMAID_TEXT,
       }
       liveIdRef.current = document.id
+      setHighlight(null)
       historyRef.current = cache.history
       dispatch({ type: 'restore', state: cache.history })
       persistedRef.current = { path: document.path, text: cache.persistedText }
@@ -295,6 +323,50 @@ export function useMermaidDocument({
     [refreshProjectFiles, refreshRecents, setDocument],
   )
 
+  const highlightTokenRef = useRef(0)
+
+  const highlightSymbol = useCallback((documentId: string, locators: SymbolLocator[], display: string) => {
+    highlightTokenRef.current += 1
+    setHighlight({ documentId, locators, display, token: highlightTokenRef.current })
+  }, [])
+
+  const clearHighlight = useCallback(() => setHighlight(null), [])
+
+  // Re-runs whenever the preview is re-rendered, so the marks survive a re-parse.
+  useEffect(() => {
+    const container = previewRef.current
+    if (!container) {
+      return
+    }
+    clearSymbolHighlight(container)
+    if (!highlight || highlight.documentId !== liveIdRef.current || !diagram.markup) {
+      return
+    }
+    const targets = applySymbolHighlight(container, highlight.locators, highlight.display)
+    if (targets.length) {
+      viewportRef.current?.focusElement(targets)
+    }
+  }, [diagram, highlight])
+
+  const handleExportPng = useCallback(async () => {
+    const current = diagramRef.current
+    if (!current.markup || error) {
+      setMessage(error ? 'Fix Mermaid syntax before exporting.' : 'Nothing to export yet.')
+      return
+    }
+    try {
+      const contents = await renderDiagramToPngBytes(current, DIAGRAM_PAPER_BACKGROUND)
+      const suggestedName = name.trim() || (title ? titleToFileStem(title) : '') || 'diagram'
+      const response = await api.savePngFile({ name: suggestedName, contents })
+      setMessage(`Exported ${baseName(response.path)}.`)
+    } catch (error_) {
+      if (errorMessage(error_, '') !== 'Save cancelled') {
+        console.error('[excalibur] save_png_file failed', error_)
+        setMessage(errorMessage(error_, 'Unable to export PNG.'))
+      }
+    }
+  }, [error, name, title])
+
   /**
    * Checks the source can be converted and works out how the resulting drawing
    * should be named and where it should be saved. Reports why not, and returns
@@ -324,9 +396,13 @@ export function useMermaidDocument({
     dirty,
     text,
     title,
-    svg,
+    diagram,
     error,
     isConverting,
+    previewRef,
+    viewportRef,
+    highlightSymbol,
+    clearHighlight,
     setMessage,
     setConverting: setIsConverting,
     getLiveId,
@@ -340,5 +416,6 @@ export function useMermaidDocument({
     handleKeyDown,
     handleSave,
     handleRename,
+    handleExportPng,
   }
 }

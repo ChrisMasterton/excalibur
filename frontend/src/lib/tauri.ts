@@ -16,6 +16,12 @@ export type SaveFileRequest = {
   contents: string
 }
 
+export type SavePngFileRequest = {
+  /** Suggested file name; the backend appends `.png` when it is missing. */
+  name?: string
+  contents: Uint8Array
+}
+
 /** Typed wrappers around the Tauri commands exposed by src-tauri/src/main.rs. */
 export const api = {
   listRecents: () => invoke<RecentItem[]>('list_recents'),
@@ -46,6 +52,11 @@ export const api = {
     invoke<OpenFileResponse>('load_mermaid_path', { path, trackRecent }),
   saveMermaidFile: (request: SaveFileRequest) =>
     invoke<SaveFileResponse>('save_mermaid_file', { request }),
+  /** Opens a save dialog and writes PNG bytes; serde wants a plain number array. */
+  savePngFile: (request: SavePngFileRequest) =>
+    invoke<SaveFileResponse>('save_png_file', {
+      request: { name: request.name, contents: Array.from(request.contents) },
+    }),
 
   loadSettings: () => invoke<unknown>('load_settings'),
   saveSettings: (settings: Record<string, unknown>) => invoke<void>('save_settings', { settings }),
