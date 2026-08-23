@@ -1,5 +1,13 @@
 # Release Notes
 
+## Document tabs - 2026-08-23
+- Documents now open as **tabs**: Recent items, project files, drops, file associations, `Open…`, `New drawing`, and Mermaid conversions all add a tab instead of replacing the open document. Unsaved edits travel with their tab, so switching tabs never prompts.
+- Opening a file takes over an untouched blank tab instead of leaving an empty *Untitled* beside it, and *Recover backup* loads into the tab that already has that file rather than opening a second one.
+- **Open all diagrams** on a project row opens every diagram in the folder at once, in parallel, without pushing them into Recent.
+- Tabs can be closed with ✕, middle-click, `Cmd/Ctrl+W`, or the right-click menu (*Close / Close others / Close all*); dirty tabs still ask first, and quitting checks every tab.
+- `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle tabs and `Cmd/Ctrl+1`…`9` jump to one. Open files are marked in Recent/Projects and the active one is highlighted.
+- The set of open tabs is restored on the next launch; files that no longer exist are skipped.
+
 ## Projects, icon toolbar, and better Mermaid conversion - 2026-08-23
 - Mermaid conversion now measures labels with the real Excalidraw fonts and refits containers, so text no longer overflows its boxes; a **Refit text** action fixes drawings converted earlier.
 - Converting loads the diagram onto the canvas (fit to view) as an unsaved drawing instead of forcing a save dialog; `<br/>` in labels becomes a line break.

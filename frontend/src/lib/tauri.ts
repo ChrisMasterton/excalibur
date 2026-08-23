@@ -34,13 +34,16 @@ export const api = {
   renameFile: (path: string, name: string) => invoke<string>('rename_file', { path, name }),
 
   openExcalidrawFile: () => invoke<OpenFileResponse | null>('open_excalidraw_file'),
-  loadExcalidrawPath: (path: string) => invoke<OpenFileResponse>('load_excalidraw_path', { path }),
+  /** `trackRecent: false` loads without pushing the file into the Recent list. */
+  loadExcalidrawPath: (path: string, trackRecent = true) =>
+    invoke<OpenFileResponse>('load_excalidraw_path', { path, trackRecent }),
   saveExcalidrawFile: (request: SaveFileRequest) =>
     invoke<SaveFileResponse>('save_excalidraw_file', { request }),
   loadImageFile: (path: string) => invoke<LoadImageFileResponse>('load_image_file', { path }),
 
   openMermaidFile: () => invoke<OpenFileResponse | null>('open_mermaid_file'),
-  loadMermaidPath: (path: string) => invoke<OpenFileResponse>('load_mermaid_path', { path }),
+  loadMermaidPath: (path: string, trackRecent = true) =>
+    invoke<OpenFileResponse>('load_mermaid_path', { path, trackRecent }),
   saveMermaidFile: (request: SaveFileRequest) =>
     invoke<SaveFileResponse>('save_mermaid_file', { request }),
 

@@ -648,7 +648,11 @@ async fn open_excalidraw_file(app: AppHandle) -> Result<Option<OpenFileResponse>
 }
 
 #[tauri::command]
-fn load_excalidraw_path(app: AppHandle, path: String) -> Result<OpenFileResponse, String> {
+fn load_excalidraw_path(
+    app: AppHandle,
+    path: String,
+    track_recent: Option<bool>,
+) -> Result<OpenFileResponse, String> {
     eprintln!("[excalibur] load_excalidraw_path: loading from path={}", path);
     let path_buf = PathBuf::from(&path);
 
@@ -656,11 +660,13 @@ fn load_excalidraw_path(app: AppHandle, path: String) -> Result<OpenFileResponse
     let name = file_name(&path_buf);
     let path_string = path_buf.to_string_lossy().to_string();
 
-    eprintln!(
-        "[excalibur] load_excalidraw_path: updating recents for path={}, name={:?}",
-        path_string, name
-    );
-    update_recents(&app, "excalidraw", &path_string, name.clone());
+    if track_recent.unwrap_or(true) {
+        eprintln!(
+            "[excalibur] load_excalidraw_path: updating recents for path={}, name={:?}",
+            path_string, name
+        );
+        update_recents(&app, "excalidraw", &path_string, name.clone());
+    }
 
     eprintln!(
         "[excalibur] load_excalidraw_path: returning response with {} bytes of content",
@@ -799,12 +805,18 @@ async fn open_mermaid_file(app: AppHandle) -> Result<Option<OpenFileResponse>, S
 }
 
 #[tauri::command]
-fn load_mermaid_path(app: AppHandle, path: String) -> Result<OpenFileResponse, String> {
+fn load_mermaid_path(
+    app: AppHandle,
+    path: String,
+    track_recent: Option<bool>,
+) -> Result<OpenFileResponse, String> {
     let path_buf = PathBuf::from(path);
     let contents = read_file(&path_buf)?;
     let name = file_name(&path_buf);
     let path_string = path_buf.to_string_lossy().to_string();
-    update_recents(&app, "mermaid", &path_string, name.clone());
+    if track_recent.unwrap_or(true) {
+        update_recents(&app, "mermaid", &path_string, name.clone());
+    }
 
     Ok(OpenFileResponse {
         path: path_string,

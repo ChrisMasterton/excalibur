@@ -2,14 +2,16 @@ import type { MouseEvent } from 'react'
 import { useContextMenu } from '../hooks/useContextMenu'
 import { buildMoveToProjectItems, kindIcon } from '../lib/menus'
 import { baseName, dirName, shortDirName } from '../lib/paths'
-import type { DiagramKind, ProjectItem, RecentItem } from '../types'
+import type { ProjectItem, RecentItem } from '../types'
 import { Icon } from './Icon'
 import { IconButton } from './IconButton'
 
 type RecentListProps = {
   recents: RecentItem[]
   projects: ProjectItem[]
-  activePaths: Record<DiagramKind, string | null>
+  /** Paths with an open tab; the active one gets a stronger highlight. */
+  openPaths: Set<string>
+  activePath: string | null
   onOpen: (item: RecentItem) => void
   onMoveToProject: (item: RecentItem, project: ProjectItem) => void
   onMoveToNewProject: (item: RecentItem) => void
@@ -19,7 +21,8 @@ type RecentListProps = {
 export function RecentList({
   recents,
   projects,
-  activePaths,
+  openPaths,
+  activePath,
   onOpen,
   onMoveToProject,
   onMoveToNewProject,
@@ -52,11 +55,12 @@ export function RecentList({
   return (
     <div className="file-list">
       {recents.map((item) => {
-        const active = activePaths[item.kind] === item.path
+        const open = openPaths.has(item.path)
+        const active = activePath === item.path
         return (
           <div
             key={`${item.kind}-${item.path}`}
-            className={`file-row${active ? ' is-active' : ''}`}
+            className={`file-row${open ? ' is-open' : ''}${active ? ' is-active' : ''}`}
             onContextMenu={(event) => openMenu(event, item)}
           >
             <button

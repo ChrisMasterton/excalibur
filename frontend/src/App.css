@@ -418,9 +418,19 @@
     border-color var(--motion-fast) var(--ease-standard);
 }
 
+/* Open in a tab; the active tab gets the stronger accent below. */
+.file-row.is-open {
+  background: rgba(254, 247, 232, 0.06);
+  border-color: rgba(254, 247, 232, 0.12);
+}
+
 .file-row.is-active {
   background: rgba(247, 195, 111, 0.14);
   border-color: rgba(247, 195, 111, 0.35);
+}
+
+.file-row.is-open .file-row-icon {
+  color: var(--sidebar-ink);
 }
 
 .file-row.is-nested {
@@ -611,6 +621,92 @@
 
 .workspace-panel[hidden] {
   display: none;
+}
+
+/* Document tabs ------------------------------------------------------------- */
+
+.document-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.document-tab {
+  display: flex;
+  align-items: center;
+  flex: none;
+  max-width: 220px;
+  padding-right: 2px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--ink-soft);
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
+}
+
+.document-tab.is-active {
+  background: rgba(247, 195, 111, 0.22);
+  border-color: rgba(13, 15, 18, 0.12);
+  color: var(--ink);
+}
+
+.document-tab-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 6px 7px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 10px;
+}
+
+.document-tab-icon {
+  flex: none;
+  opacity: 0.75;
+}
+
+.document-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-tab .dirty-dot {
+  width: 7px;
+  height: 7px;
+  box-shadow: none;
+  background: var(--ink-soft);
+}
+
+.document-tab.is-active .dirty-dot {
+  background: var(--accent-ink);
+}
+
+.document-tab-close {
+  flex: none;
+  opacity: 0;
+  color: inherit;
+}
+
+.document-tab:hover .document-tab-close,
+.document-tab:focus-within .document-tab-close,
+.document-tab.is-active .document-tab-close {
+  opacity: 1;
 }
 
 /* Toolbar ------------------------------------------------------------------- */
@@ -1097,6 +1193,14 @@
     background: rgba(255, 255, 255, 0.07);
   }
 
+  .document-tab:hover {
+    background: rgba(13, 15, 18, 0.06);
+  }
+
+  .document-tab.is-active:hover {
+    background: rgba(247, 195, 111, 0.3);
+  }
+
   .file-row.is-active:hover {
     background: rgba(247, 195, 111, 0.2);
   }
@@ -1145,6 +1249,7 @@
   .sidebar,
   .sidebar-return,
   .file-row,
+  .document-tab,
   .tab-button,
   .panel-tab,
   .icon-button,

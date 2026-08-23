@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type MouseEvent } from 'react'
 import { api, errorMessage } from '../lib/tauri'
-import type { DiagramKind, ProjectFile, ProjectItem } from '../types'
+import type { ProjectFile, ProjectItem } from '../types'
 import { useContextMenu } from '../hooks/useContextMenu'
 import { EditableTitle } from './EditableTitle'
 import { Icon } from './Icon'
@@ -19,11 +19,15 @@ type ProjectsPanelProps = {
   projects: ProjectItem[]
   /** Bump to re-scan every expanded project (e.g. after a save or move). */
   refreshToken: number
-  activePaths: Record<DiagramKind, string | null>
+  /** Paths with an open tab; the active one gets a stronger highlight. */
+  openPaths: Set<string>
+  activePath: string | null
   onAddProject: () => void
   onRemoveProject: (project: ProjectItem) => void
   onRenameProject: (project: ProjectItem, name: string) => Promise<void>
   onOpenFile: (file: ProjectFile) => void
+  /** Opens every diagram in the folder as a tab. */
+  onOpenAllFiles: (project: ProjectItem) => void
   onMoveFile: (file: ProjectFile, project: ProjectItem) => void
   onMoveFileToNewProject: (file: ProjectFile) => void
   onError: (message: string) => void
@@ -41,11 +45,13 @@ function readExpanded(): string[] {
 export function ProjectsPanel({
   projects,
   refreshToken,
-  activePaths,
+  openPaths,
+  activePath,
   onAddProject,
   onRemoveProject,
   onRenameProject,
   onOpenFile,
+  onOpenAllFiles,
   onMoveFile,
   onMoveFileToNewProject,
   onError,
@@ -92,6 +98,7 @@ export function ProjectsPanel({
 
   const openProjectMenu = (event: MouseEvent, project: ProjectItem) => {
     menu.open(event, [
+      { label: 'Open all diagrams', icon: 'folder-open', onSelect: () => onOpenAllFiles(project) },
       { label: 'Rename project', icon: 'pencil', onSelect: () => setRenaming(project.path) },
       { label: 'Rescan folder', icon: 'refresh', onSelect: () => void loadFiles(project.path) },
       { separator: true },
@@ -168,6 +175,13 @@ export function ProjectsPanel({
                   }}
                 />
                 <IconButton
+                  icon="folder-open"
+                  label={`Open all diagrams in ${project.name}`}
+                  size="sm"
+                  className="file-row-more"
+                  onClick={() => onOpenAllFiles(project)}
+                />
+                <IconButton
                   icon="more"
                   label={`More actions for ${project.name}`}
                   size="sm"
@@ -182,11 +196,12 @@ export function ProjectsPanel({
                     <div className="empty">No diagrams in this folder yet. Save one here and it will appear.</div>
                   ) : null}
                   {state?.files.map((file) => {
-                    const active = activePaths[file.kind] === file.path
+                    const open = openPaths.has(file.path)
+                    const active = activePath === file.path
                     return (
                       <div
                         key={file.path}
-                        className={`file-row is-nested${active ? ' is-active' : ''}`}
+                        className={`file-row is-nested${open ? ' is-open' : ''}${active ? ' is-active' : ''}`}
                         onContextMenu={(event) => openFileMenu(event, file, project)}
                       >
                         <button

@@ -2,19 +2,34 @@ import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 
 type MockState = {
-  invocations: Array<{ cmd: string }>
+  invocations: Array<{ cmd: string; args: Record<string, unknown> }>
   savedFiles: Record<string, string>
   settings: Record<string, unknown>
   confirmMessages: string[]
+  recents: Array<{ kind: string; path: string }>
   exitCount: number
+}
+
+type MockSeed = {
+  files?: Record<string, string>
+  projects?: Array<{ path: string; name: string; added_at: number }>
+  projectFiles?: Record<string, Array<Record<string, unknown>>>
 }
 
 declare global {
   interface Window {
     __PLAYWRIGHT_TAURI_MOCK__?: MockState
+    __PLAYWRIGHT_TAURI_SEED__?: MockSeed
     __PLAYWRIGHT_EMIT_TAURI_EVENT__?: (eventName: string, payload?: unknown) => Promise<void>
     __PLAYWRIGHT_SET_CONFIRM_RESULT__?: (result: boolean) => void
   }
+}
+
+/** Seeds files/projects the mocked backend should serve. Must run before `page.goto`. */
+async function seedBackend(page: Page, seed: MockSeed) {
+  await page.addInitScript((value) => {
+    window.__PLAYWRIGHT_TAURI_SEED__ = value
+  }, seed)
 }
 
 const mermaidSource = readFileSync(new URL('./fixtures/mermaid-smoke.mmd', import.meta.url), 'utf8')
@@ -25,6 +40,7 @@ test.beforeEach(async ({ page }) => {
     const settings = {}
     const invocations = []
     const confirmMessages = []
+    const recents = []
     const listeners = {}
     const listenerEntries = {}
     const callbacks = {}
@@ -57,11 +73,28 @@ test.beforeEach(async ({ page }) => {
       confirmMessages.push(String(message))
       return confirmResult
     }
+    const seed = () => window.__PLAYWRIGHT_TAURI_SEED__ ?? {}
+    const readFile = (path) => {
+      const contents = savedFiles[path] ?? (seed().files ?? {})[path]
+      if (typeof contents !== 'string') {
+        throw new Error(`Missing mock file for ${path}`)
+      }
+      return contents
+    }
+    const trackRecent = (kind, path) => {
+      const existing = recents.findIndex((item) => item.path === path)
+      if (existing !== -1) {
+        recents.splice(existing, 1)
+      }
+      recents.unshift({ kind, path, name: fileNameFromPath(path), updated_at: Date.now() })
+    }
+
     window.__PLAYWRIGHT_TAURI_MOCK__ = {
       invocations,
       savedFiles,
       settings,
       confirmMessages,
+      recents,
       exitCount: 0,
     }
     window.__PLAYWRIGHT_SET_CONFIRM_RESULT__ = (result) => {
@@ -97,13 +130,19 @@ test.beforeEach(async ({ page }) => {
       },
       unregisterCallback() {},
       async invoke(cmd, args = {}) {
-        invocations.push({ cmd })
+        const loggedArgs = { ...(args ?? {}) }
+        delete loggedArgs.request
+        invocations.push({ cmd, args: loggedArgs })
 
         switch (cmd) {
           case 'list_recents':
-          case 'list_projects':
+            return [...recents]
           case 'remove_recent':
             return []
+          case 'list_projects':
+            return seed().projects ?? []
+          case 'list_project_files':
+            return (seed().projectFiles ?? {})[args.path] ?? []
           case 'load_settings':
             return { ...settings }
           case 'save_settings':
@@ -142,11 +181,12 @@ test.beforeEach(async ({ page }) => {
             savedFiles[path] = request.contents
             return { path }
           }
-          case 'load_excalidraw_path': {
+          case 'load_excalidraw_path':
+          case 'load_mermaid_path': {
             const path = args.path
-            const contents = savedFiles[path]
-            if (typeof contents !== 'string') {
-              throw new Error(`Missing mock file for ${path}`)
+            const contents = readFile(path)
+            if (args.trackRecent !== false) {
+              trackRecent(cmd === 'load_excalidraw_path' ? 'excalidraw' : 'mermaid', path)
             }
             return {
               path,
@@ -574,4 +614,301 @@ test('imports dropped image files into the Excalidraw canvas', async ({ page }) 
   expect(imported.imageElement.height).toBe(48)
   expect(imported.file.mimeType).toBe('image/png')
   expect(imported.file.dataURL).toContain('data:image/png;base64,')
+})
+
+// ---------------------------------------------------------------------------
+// Open documents as tabs
+// ---------------------------------------------------------------------------
+
+const PROJECT = { path: '/mock/project', name: 'Diagrams', added_at: 1 }
+
+const PROJECT_SEED: MockSeed = {
+  files: {
+    '/mock/project/one.mmd': 'flowchart TD\n  A[One] --> B[Done]',
+    '/mock/project/two.mmd': 'flowchart TD\n  C[Two] --> D[Done]',
+    '/mock/project/three.excalidraw': JSON.stringify({
+      type: 'excalidraw',
+      version: 2,
+      source: 'local',
+      elements: [],
+      appState: {},
+      files: {},
+    }),
+  },
+  projects: [PROJECT],
+  projectFiles: {
+    '/mock/project': [
+      { kind: 'mermaid', path: '/mock/project/one.mmd', name: 'one.mmd', relative_path: 'one.mmd', updated_at: 1 },
+      { kind: 'mermaid', path: '/mock/project/two.mmd', name: 'two.mmd', relative_path: 'two.mmd', updated_at: 2 },
+      {
+        kind: 'excalidraw',
+        path: '/mock/project/three.excalidraw',
+        name: 'three.excalidraw',
+        relative_path: 'three.excalidraw',
+        updated_at: 3,
+      },
+    ],
+  },
+}
+
+async function openProjectsPanel(page: Page) {
+  await page.getByRole('tab', { name: 'Projects' }).click()
+  await page.getByRole('button', { name: `Expand ${PROJECT.name}` }).click()
+}
+
+test('opens two files as separate tabs and keeps each one\'s unsaved edits', async ({ page }) => {
+  await seedBackend(page, PROJECT_SEED)
+  await page.goto('/')
+  await openProjectsPanel(page)
+
+  await page.locator('.file-row-main[title="/mock/project/one.mmd"]').click()
+  await expect(page.getByRole('tab', { name: 'one' })).toHaveAttribute('aria-selected', 'true')
+  await page.locator('.mermaid-editor textarea').fill('flowchart TD\n  A[Edited one] --> B[Done]')
+
+  await page.locator('.file-row-main[title="/mock/project/two.mmd"]').click()
+  await expect(page.getByRole('tab', { name: 'two' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.mermaid-editor textarea')).toHaveValue('flowchart TD\n  C[Two] --> D[Done]')
+  await page.locator('.mermaid-editor textarea').fill('flowchart TD\n  C[Edited two] --> D[Done]')
+
+  // The first file took over the blank startup tab, so it is one tab per file.
+  await expect(page.locator('.document-tab')).toHaveCount(2)
+
+  // Switching back must not prompt, and must bring the unsaved edits with it.
+  await page.getByRole('tab', { name: 'one' }).click()
+  await expect(page.locator('.mermaid-editor textarea')).toHaveValue('flowchart TD\n  A[Edited one] --> B[Done]')
+  await page.getByRole('tab', { name: 'two' }).click()
+  await expect(page.locator('.mermaid-editor textarea')).toHaveValue('flowchart TD\n  C[Edited two] --> D[Done]')
+
+  const mockState = await getMockState(page)
+  expect(mockState.confirmMessages).toEqual([])
+  // Both tabs are marked open in the sidebar; only the active one is highlighted.
+  await expect(page.locator('.file-row.is-open')).toHaveCount(2)
+  await expect(page.locator('.file-row.is-active')).toHaveCount(1)
+})
+
+test('opens every diagram in a project as tabs without filling the recent list', async ({ page }) => {
+  await seedBackend(page, PROJECT_SEED)
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Projects' }).click()
+
+  await page.getByRole('button', { name: `Open all diagrams in ${PROJECT.name}` }).click()
+
+  await expect(page.locator('.document-tab')).toHaveCount(3)
+  await expect(page.getByRole('tab', { name: 'one' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByText('Opened 3 diagrams from Diagrams.')).toBeVisible()
+
+  const mockState = await getMockState(page)
+  expect(mockState.recents).toEqual([])
+  const loads = mockState.invocations.filter((call) => call.cmd.endsWith('_path'))
+  expect(loads).toHaveLength(3)
+  expect(loads.every((call) => call.args.trackRecent === false)).toBe(true)
+
+  // Re-running it is a no-op rather than a duplicate set of tabs.
+  await page.getByRole('button', { name: `Open all diagrams in ${PROJECT.name}` }).click()
+  await expect(page.getByText('Every diagram in Diagrams is already open.')).toBeVisible()
+  await expect(page.locator('.document-tab')).toHaveCount(3)
+})
+
+test('prompts before closing a tab with unsaved changes', async ({ page }) => {
+  await page.goto('/')
+
+  await page.getByRole('tab', { name: 'Mermaid' }).click()
+  await setDocumentName(page, 'Mermaid', 'closing-flow')
+  await page.locator('.mermaid-editor textarea').fill(mermaidSource)
+  const tab = page.locator('.document-tab', { hasText: 'closing-flow' })
+  await expect(tab.locator('.dirty-dot')).toBeVisible()
+
+  await page.evaluate(() => window.__PLAYWRIGHT_SET_CONFIRM_RESULT__?.(false))
+  await page.getByRole('button', { name: 'Close closing-flow' }).click()
+  await expect(tab).toHaveCount(1)
+
+  let mockState = await getMockState(page)
+  expect(mockState.confirmMessages).toHaveLength(1)
+  expect(mockState.confirmMessages[0]).toContain('unsaved Mermaid (closing-flow) changes')
+
+  await page.evaluate(() => window.__PLAYWRIGHT_SET_CONFIRM_RESULT__?.(true))
+  await page.getByRole('button', { name: 'Close closing-flow' }).click()
+  await expect(tab).toHaveCount(0)
+
+  mockState = await getMockState(page)
+  expect(mockState.confirmMessages).toHaveLength(2)
+
+  // Closing a clean tab never asks.
+  await page.getByRole('button', { name: 'Close Untitled' }).click()
+  mockState = await getMockState(page)
+  expect(mockState.confirmMessages).toHaveLength(2)
+  // The workspace is never left without a document.
+  await expect(page.locator('.document-tab')).toHaveCount(1)
+})
+
+test('restores the open tabs after a reload', async ({ page }) => {
+  await seedBackend(page, PROJECT_SEED)
+  await page.goto('/')
+  await openProjectsPanel(page)
+
+  await page.locator('.file-row-main[title="/mock/project/one.mmd"]').click()
+  await page.locator('.file-row-main[title="/mock/project/two.mmd"]').click()
+  await expect(page.getByRole('tab', { name: 'two' })).toHaveAttribute('aria-selected', 'true')
+  await expect
+    .poll(async () => page.evaluate(() => window.localStorage.getItem('excalibur.openDocuments')))
+    .toContain('/mock/project/two.mmd')
+
+  await page.reload()
+
+  await expect(page.locator('.document-tab')).toHaveCount(2)
+  await expect(page.getByRole('tab', { name: 'one' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'two' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.mermaid-editor textarea')).toHaveValue('flowchart TD\n  C[Two] --> D[Done]')
+
+  const mockState = await getMockState(page)
+  expect(mockState.recents).toEqual([])
+})
+
+test('switches and closes tabs from the keyboard', async ({ page }) => {
+  await seedBackend(page, PROJECT_SEED)
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Projects' }).click()
+  await page.getByRole('button', { name: `Open all diagrams in ${PROJECT.name}` }).click()
+  await expect(page.locator('.document-tab')).toHaveCount(3)
+
+  // Cmd/Ctrl+1..9 jumps straight to a tab.
+  await page.keyboard.press('ControlOrMeta+1')
+  await expect(page.getByRole('tab', { name: 'one' })).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('ControlOrMeta+2')
+  await expect(page.getByRole('tab', { name: 'two' })).toHaveAttribute('aria-selected', 'true')
+
+  // Ctrl+Tab cycles forward, Ctrl+Shift+Tab back.
+  await page.keyboard.press('Control+Tab')
+  await expect(page.getByRole('tab', { name: 'three' })).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('Control+Shift+Tab')
+  await expect(page.getByRole('tab', { name: 'two' })).toHaveAttribute('aria-selected', 'true')
+
+  // Cmd/Ctrl+W closes the active tab; a clean one never prompts.
+  await page.keyboard.press('ControlOrMeta+w')
+  await expect(page.locator('.document-tab')).toHaveCount(2)
+  await expect(page.getByRole('tab', { name: 'two' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'three' })).toHaveAttribute('aria-selected', 'true')
+
+  const mockState = await getMockState(page)
+  expect(mockState.confirmMessages).toEqual([])
+})
+
+test('keeps each Excalidraw tab on its own scene when switching', async ({ page }) => {
+  await page.goto('/')
+
+  await page.getByRole('tab', { name: 'Mermaid' }).click()
+  await setDocumentName(page, 'Mermaid', 'alpha')
+  await page.locator('.mermaid-editor textarea').fill('flowchart TD\n  A[One] --> B[Two]')
+  await page.getByRole('button', { name: 'Convert to Excalidraw' }).click()
+  await expect(page.getByRole('button', { name: 'Excalidraw document name' })).toHaveText('alpha')
+  const alphaScene = await readAutosavedScene(page)
+
+  await page.getByRole('tab', { name: 'Mermaid' }).click()
+  await setDocumentName(page, 'Mermaid', 'beta')
+  await page.locator('.mermaid-editor textarea').fill(mermaidSource)
+  await page.getByRole('button', { name: 'Convert to Excalidraw' }).click()
+  await expect(page.getByRole('button', { name: 'Excalidraw document name' })).toHaveText('beta')
+  const betaScene = await readAutosavedScene(page)
+  expect(betaScene.elements.length).not.toBe(alphaScene.elements.length)
+
+  // Two converted drawings plus the Mermaid source; the first took over the blank tab.
+  await expect(page.locator('.document-tab')).toHaveCount(3)
+
+  // `.icon-pen` picks the converted drawing rather than the Mermaid source tab.
+  await page.locator('.document-tab:has(.icon-pen)', { hasText: 'alpha' }).getByRole('tab').click()
+  await expect(page.getByRole('button', { name: 'Excalidraw document name' })).toHaveText('alpha')
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const raw = window.localStorage.getItem('excalibur.excalidraw.autosave.current')
+        return raw ? JSON.parse(JSON.parse(raw).contents).elements.length : 0
+      }),
+    )
+    .toBe(alphaScene.elements.length)
+
+  await page.locator('.document-tab:has(.icon-pen)', { hasText: 'beta' }).getByRole('tab').click()
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const raw = window.localStorage.getItem('excalibur.excalidraw.autosave.current')
+        return raw ? JSON.parse(JSON.parse(raw).contents).elements.length : 0
+      }),
+    )
+    .toBe(betaScene.elements.length)
+})
+
+test('closes other tabs and all tabs from the tab context menu', async ({ page }) => {
+  await seedBackend(page, PROJECT_SEED)
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Projects' }).click()
+  await page.getByRole('button', { name: `Open all diagrams in ${PROJECT.name}` }).click()
+  await expect(page.locator('.document-tab')).toHaveCount(3)
+
+  await page.locator('.document-tab', { hasText: 'two' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Close others' }).click()
+  await expect(page.locator('.document-tab')).toHaveCount(1)
+  await expect(page.getByRole('tab', { name: 'two' })).toHaveAttribute('aria-selected', 'true')
+
+  await page.locator('.document-tab', { hasText: 'two' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Close all' }).click()
+  // Closing everything leaves one empty document of the same kind behind.
+  await expect(page.locator('.document-tab')).toHaveCount(1)
+  await expect(page.getByRole('tab', { name: 'Untitled' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.workspace-panel:not([hidden])')).toHaveAttribute('aria-label', 'Mermaid editor')
+
+  const mockState = await getMockState(page)
+  expect(mockState.confirmMessages).toEqual([])
+})
+
+test('takes over the blank startup tab when a file is opened', async ({ page }) => {
+  await seedBackend(page, PROJECT_SEED)
+  await page.goto('/')
+  await expect(page.getByRole('tab', { name: 'Untitled' })).toHaveAttribute('aria-selected', 'true')
+
+  await openProjectsPanel(page)
+  await page.locator('.file-row-main[title="/mock/project/one.mmd"]').click()
+
+  await expect(page.locator('.document-tab')).toHaveCount(1)
+  await expect(page.getByRole('tab', { name: 'one' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: 'Untitled' })).toHaveCount(0)
+
+  // A tab with content is never recycled.
+  await page.locator('.mermaid-editor textarea').fill('flowchart TD\n  A[Edited] --> B[Done]')
+  await page.locator('.file-row-main[title="/mock/project/two.mmd"]').click()
+  await expect(page.locator('.document-tab')).toHaveCount(2)
+})
+
+test('recovers an autosave backup into the tab that already has that file', async ({ page }) => {
+  await page.goto('/')
+  await convertMermaid(page, 'recover')
+  await page.getByRole('button', { name: /^Save$/ }).click()
+  await expect(page.getByTestId('excalidraw-path')).toHaveAttribute('data-path', '/mock/recover.excalidraw')
+
+  const saved = (await getMockState(page)).savedFiles['/mock/recover.excalidraw']
+  const scene = JSON.parse(saved) as { appState: Record<string, unknown> }
+  const backup = JSON.stringify({ ...scene, appState: { ...scene.appState, viewBackgroundColor: '#fff5e6' } })
+
+  // Relaunch with the file on disk and a newer backup for it waiting to be recovered.
+  await page.addInitScript(
+    ({ path, contents, backupContents }) => {
+      window.__PLAYWRIGHT_TAURI_SEED__ = { files: { [path]: contents } }
+      window.localStorage.setItem(
+        'excalibur.excalidraw.autosave.recovery',
+        JSON.stringify({ contents: backupContents, path, name: 'recover', updatedAt: 1 }),
+      )
+    },
+    { path: '/mock/recover.excalidraw', contents: saved, backupContents: backup },
+  )
+  await page.reload()
+
+  await expect(page.locator('.document-tab')).toHaveCount(1)
+  await expect(page.getByTestId('excalidraw-path')).toHaveAttribute('data-path', '/mock/recover.excalidraw')
+
+  await page.getByRole('button', { name: 'Recover backup' }).click()
+
+  await expect(page.getByText('Recovered autosave backup for recover.excalidraw.')).toBeVisible()
+  // Same tab, same file, now carrying unsaved changes.
+  await expect(page.locator('.document-tab')).toHaveCount(1)
+  await expect(page.getByTestId('excalidraw-path')).toHaveAttribute('data-path', '/mock/recover.excalidraw')
+  await expect(page.locator('.document-tab .dirty-dot')).toBeVisible()
 })

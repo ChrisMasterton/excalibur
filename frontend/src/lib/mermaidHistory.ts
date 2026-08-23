@@ -9,6 +9,7 @@ export type MermaidHistoryAction =
   | { type: 'undo' }
   | { type: 'redo' }
   | { type: 'reset'; text: string }
+  | { type: 'restore'; state: MermaidHistoryState }
 
 export const INITIAL_MERMAID_TEXT =
   'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Ship it]\n  B -->|No| D[Refine]'
@@ -34,6 +35,8 @@ export function mermaidHistoryReducer(
     }
     case 'reset':
       return { text: action.text, past: [], future: [] }
+    case 'restore':
+      return action.state
     default:
       return state
   }
