@@ -4,7 +4,7 @@ import type { ComponentProps, DragEvent, RefObject } from 'react'
 import { DocumentToolbar } from './DocumentToolbar'
 import { IconButton } from './IconButton'
 
-type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>
+export type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>
 
 type ExcalidrawWorkspaceProps = {
   hidden: boolean
