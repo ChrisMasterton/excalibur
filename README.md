@@ -66,6 +66,19 @@ Markdown input preserves surrounding Markdown, renders each `` ```mermaid `` cod
 
 On parse or render failures, the command exits nonzero and writes JSON diagnostics to stderr with the file, diagram index, line, stage, and message.
 
+## Workspaces, Recents, and Projects
+
+- **Excalidraw** and **Mermaid** are two always-mounted workspaces; switching between them keeps the canvas and editor state intact.
+- The toolbar title is the file name. Click it to rename (the file is renamed on disk when one is loaded); `Cmd/Ctrl+S` saves and `Cmd/Ctrl+O` opens in the active workspace.
+- **Convert to Excalidraw** loads the Mermaid diagram onto the canvas as an unsaved drawing, measured with the real Excalidraw fonts so labels fit their boxes. **Refit text** in the Excalidraw toolbar applies the same pass to drawings converted earlier.
+- Mermaid files can carry a display title in YAML frontmatter (`---\ntitle: Auth flow\n---`). It shows beside the file name in the toolbar, becomes the display name in Recent/Projects, and seeds the drawing name when converting an unnamed diagram.
+- **Recent** lists the last 10 files. Right-click (or the `…` button) to move a file into a project or remove it from the list.
+- **Projects** are plain folders. *Add project folder…* registers a folder (the picker can create one), and every `.excalidraw`, `.mmd`, or `.mermaid` file inside it (up to four levels deep) appears under the project. Rename a project to rename the folder; *Remove from projects* only forgets the folder and never deletes files. Dropping a folder onto the window registers it too.
+
+## Settings
+
+The gear button in the sidebar (or `Cmd/Ctrl+,`) opens global settings: Mermaid preview zoom speed, scroll-wheel behaviour (pan vs zoom), whether *Fit to window* may enlarge small diagrams, editor font size, how many recent files to keep, and project scan depth. They are stored in `settings.json` in the app data folder, so every Excalibur window and instance shares them.
+
 ## File Associations
 
 Excalibur registers as the handler for `.excalidraw` files, so you can double-click them to open directly in the app.
@@ -74,7 +87,9 @@ Excalibur registers as the handler for `.excalidraw` files, so you can double-cl
 
 ```
 frontend/       React + Vite frontend (Excalidraw, Mermaid)
-src-tauri/      Tauri 2 backend (Rust)
+  src/components/   Sidebar, toolbar, workspaces, context menu, zoom/pan viewport
+  src/lib/          Tauri command wrappers, Mermaid conversion, text refit, helpers
+src-tauri/      Tauri 2 backend (Rust): file dialogs, recents, projects (projects.json)
 install.sh      Build & install script
 run.sh          Launch a release build
 install.ps1     Windows build & install script

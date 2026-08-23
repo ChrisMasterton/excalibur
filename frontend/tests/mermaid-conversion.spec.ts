@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 type MockState = {
   invocations: Array<{ cmd: string }>
   savedFiles: Record<string, string>
+  settings: Record<string, unknown>
   confirmMessages: string[]
   exitCount: number
 }
@@ -21,6 +22,7 @@ const mermaidSource = readFileSync(new URL('./fixtures/mermaid-smoke.mmd', impor
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const savedFiles = {}
+    const settings = {}
     const invocations = []
     const confirmMessages = []
     const listeners = {}
@@ -58,6 +60,7 @@ test.beforeEach(async ({ page }) => {
     window.__PLAYWRIGHT_TAURI_MOCK__ = {
       invocations,
       savedFiles,
+      settings,
       confirmMessages,
       exitCount: 0,
     }
@@ -98,7 +101,14 @@ test.beforeEach(async ({ page }) => {
 
         switch (cmd) {
           case 'list_recents':
+          case 'list_projects':
+          case 'remove_recent':
             return []
+          case 'load_settings':
+            return { ...settings }
+          case 'save_settings':
+            Object.assign(settings, args.settings)
+            return null
           case 'plugin:event|listen':
             listenerId += 1
             listenerEntries[listenerId] = {
@@ -146,6 +156,15 @@ test.beforeEach(async ({ page }) => {
           }
           case 'take_pending_file':
             return null
+          case 'rename_file': {
+            const oldPath = args.path
+            const directory = oldPath.slice(0, oldPath.lastIndexOf('/'))
+            const ext = oldPath.slice(oldPath.lastIndexOf('.'))
+            const nextPath = `${directory}/${args.name}${ext}`
+            savedFiles[nextPath] = savedFiles[oldPath]
+            delete savedFiles[oldPath]
+            return nextPath
+          }
           default:
             throw new Error(`Unhandled Tauri invoke: ${cmd}`)
         }
@@ -165,19 +184,67 @@ async function getMockState(page: Page) {
   return await page.evaluate(() => window.__PLAYWRIGHT_TAURI_MOCK__) as MockState
 }
 
-test('converts Mermaid into a saved Excalidraw file', async ({ page }) => {
+/** The toolbar title is an inline editor: click it, type, press Enter. */
+async function setDocumentName(page: Page, kind: 'Excalidraw' | 'Mermaid', name: string) {
+  await page.getByRole('button', { name: `${kind} document name` }).click()
+  const input = page.getByRole('textbox', { name: `${kind} document name` })
+  await input.fill(name)
+  await input.press('Enter')
+  await expect(page.getByRole('button', { name: `${kind} document name` })).toHaveText(name)
+}
+
+async function convertMermaid(page: Page, name: string) {
+  await page.getByRole('tab', { name: 'Mermaid' }).click()
+  const title = page.getByRole('button', { name: 'Mermaid document name' })
+  if ((await title.textContent())?.trim() !== name) {
+    await setDocumentName(page, 'Mermaid', name)
+  }
+  await page.locator('.mermaid-editor textarea').fill(mermaidSource)
+  await page.getByRole('button', { name: 'Convert to Excalidraw' }).click()
+  await expect(page.getByRole('tab', { name: 'Excalidraw' })).toHaveClass(/active/)
+  await expect(page.getByRole('button', { name: 'Excalidraw document name' })).toHaveText(name)
+  await expect(page.getByTestId('excalidraw-path')).toHaveText('Not saved yet')
+}
+
+type SceneElement = {
+  id: string
+  type: string
+  isDeleted?: boolean
+  containerId?: string | null
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+async function readAutosavedScene(page: Page) {
+  await expect.poll(async () => page.evaluate(() => {
+    const raw = window.localStorage.getItem('excalibur.excalidraw.autosave.current')
+    if (!raw) {
+      return 0
+    }
+    const scene = JSON.parse(JSON.parse(raw).contents)
+    return scene.elements.length
+  })).toBeGreaterThan(0)
+  return await page.evaluate(() => {
+    const raw = window.localStorage.getItem('excalibur.excalidraw.autosave.current')
+    return JSON.parse(JSON.parse(raw!).contents) as { elements: SceneElement[] }
+  })
+}
+
+test('converts Mermaid onto the canvas and saves it as an Excalidraw file', async ({ page }) => {
   await page.goto('/')
 
-  await page.getByRole('button', { name: 'Mermaid' }).click()
-  await page.getByLabel('Name').fill('smoke-flow')
-  await page.locator('.mermaid-editor textarea').fill(mermaidSource)
+  await convertMermaid(page, 'smoke-flow')
 
-  await page.getByRole('button', { name: 'Convert & Save Excalidraw' }).click()
+  const mockStateBeforeSave = await getMockState(page)
+  expect(mockStateBeforeSave.invocations.map((call) => call.cmd)).not.toContain('save_excalidraw_file')
 
-  await expect(page.getByRole('button', { name: 'Excalidraw' })).toHaveClass(/active/)
-  await expect(page.getByLabel('File')).toHaveValue('/mock/smoke-flow.excalidraw')
+  await page.getByRole('button', { name: /^Save$/ }).click()
+  await expect(page.getByTestId('excalidraw-path')).toHaveAttribute('data-path', '/mock/smoke-flow.excalidraw')
+  await expect(page.getByText('Saved smoke-flow.excalidraw.')).toBeVisible()
 
-  const mockState = await page.evaluate(() => window.__PLAYWRIGHT_TAURI_MOCK__) as MockState
+  const mockState = await getMockState(page)
   const savedContents = mockState.savedFiles['/mock/smoke-flow.excalidraw']
   const serialized = JSON.parse(savedContents) as {
     type?: string
@@ -187,9 +254,115 @@ test('converts Mermaid into a saved Excalidraw file', async ({ page }) => {
   expect(serialized.type).toBe('excalidraw')
   expect(serialized.elements?.length ?? 0).toBeGreaterThan(0)
   expect(serialized.elements?.some((element) => element.isDeleted !== true)).toBe(true)
-  expect(mockState.invocations.map((call) => call.cmd)).toEqual(
-    expect.arrayContaining(['save_excalidraw_file', 'load_excalidraw_path']),
+})
+
+test('sizes converted labels so they fit inside their containers', async ({ page }) => {
+  await page.goto('/')
+
+  await convertMermaid(page, 'fit-check')
+  const scene = await readAutosavedScene(page)
+  const byId = new Map(scene.elements.map((element) => [element.id, element]))
+  const boundLabels = scene.elements.filter(
+    (element) => element.type === 'text' && !element.isDeleted && element.containerId,
   )
+  expect(boundLabels.length).toBeGreaterThan(4)
+
+  const PADDING = 5
+  for (const label of boundLabels) {
+    const container = byId.get(label.containerId!)
+    expect(container, `container for ${label.id}`).toBeTruthy()
+    if (!container || container.type === 'arrow') {
+      continue
+    }
+    let maxWidth = container.width - PADDING * 2
+    let maxHeight = container.height - PADDING * 2
+    if (container.type === 'ellipse') {
+      maxWidth = Math.round((container.width / 2) * Math.SQRT2) - PADDING * 2
+      maxHeight = Math.round((container.height / 2) * Math.SQRT2) - PADDING * 2
+    } else if (container.type === 'diamond') {
+      maxWidth = Math.round(container.width / 2) - PADDING * 2
+      maxHeight = Math.round(container.height / 2) - PADDING * 2
+    }
+    expect(label.width, `label width in ${container.type} ${container.id}`).toBeLessThanOrEqual(maxWidth + 1)
+    expect(label.height, `label height in ${container.type} ${container.id}`).toBeLessThanOrEqual(maxHeight + 1)
+    // Label stays inside the container's box.
+    expect(label.x).toBeGreaterThanOrEqual(container.x - 1)
+    expect(label.x + label.width).toBeLessThanOrEqual(container.x + container.width + 1)
+  }
+})
+
+test('shows the Mermaid frontmatter title and uses it to name the conversion', async ({ page }) => {
+  await page.goto('/')
+
+  await page.getByRole('tab', { name: 'Mermaid' }).click()
+  await expect(page.getByTestId('mermaid-subtitle')).toHaveCount(0)
+
+  await page.locator('.mermaid-editor textarea').fill(`---\ntitle: "Smoke: flow"\n---\n${mermaidSource}`)
+  await expect(page.getByTestId('mermaid-subtitle')).toHaveText('Smoke: flow')
+
+  // Zoom in, then the toolbar fit button should bring the diagram back to a fitted scale.
+  await page.getByRole('button', { name: 'Zoom in' }).click()
+  await page.getByRole('button', { name: 'Zoom in' }).click()
+  const zoomedLabel = await page.locator('.zoom-pan-percent').textContent()
+  await page.locator('.workspace-panel:not([hidden])').getByRole('button', { name: 'Fit to window' }).click()
+  await expect(page.locator('.zoom-pan-percent')).not.toHaveText(zoomedLabel ?? '')
+
+  await page.getByRole('button', { name: 'Convert to Excalidraw' }).click()
+  await expect(page.getByRole('tab', { name: 'Excalidraw' })).toHaveClass(/active/)
+  await expect(page.getByRole('button', { name: 'Excalidraw document name' })).toHaveText('Smoke flow')
+
+  await page.getByRole('button', { name: 'Fit to window' }).click()
+  await expect.poll(async () => page.evaluate(() => {
+    const raw = window.localStorage.getItem('excalibur.excalidraw.autosave.current')
+    return raw ? JSON.parse(JSON.parse(raw).contents).elements.length : 0
+  })).toBeGreaterThan(0)
+  await expect(page.getByText('Nothing on the canvas to fit yet.')).toHaveCount(0)
+})
+
+test('edits global settings and applies zoom speed to the Mermaid preview', async ({ page }) => {
+  await page.goto('/')
+
+  await page.getByRole('tab', { name: 'Mermaid' }).click()
+  await page.locator('.mermaid-editor textarea').fill(mermaidSource)
+  await expect(page.locator('.zoom-pan-percent')).toHaveText('100%')
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Settings' })
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel('Zoom speed').fill('2')
+  await dialog.getByLabel('Scroll wheel action').selectOption('zoom')
+  await dialog.getByLabel('Editor font size').fill('18')
+
+  await dialog.getByRole('button', { name: 'Done' }).click()
+  await expect(dialog).toHaveCount(0)
+
+  const mockState = await getMockState(page)
+  expect(mockState.settings).toMatchObject({ previewZoomSpeed: 2, previewWheelAction: 'zoom', mermaidEditorFontSize: 18 })
+  await expect(page.locator('.mermaid-editor textarea')).toHaveCSS('font-size', '18px')
+
+  // Zoom buttons step by 1 + 0.25 * speed = 1.5× instead of 1.25×.
+  await page.getByRole('button', { name: 'Zoom in' }).click()
+  await expect(page.locator('.zoom-pan-percent')).toHaveText('150%')
+
+  await page.keyboard.press('ControlOrMeta+,')
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0)
+})
+
+test('renames the open document through the toolbar title', async ({ page }) => {
+  await page.goto('/')
+
+  await convertMermaid(page, 'before-rename')
+  await page.getByRole('button', { name: /^Save$/ }).click()
+  await expect(page.getByTestId('excalidraw-path')).toHaveAttribute('data-path', '/mock/before-rename.excalidraw')
+
+  await setDocumentName(page, 'Excalidraw', 'after-rename')
+  await expect(page.getByTestId('excalidraw-path')).toHaveAttribute('data-path', '/mock/after-rename.excalidraw')
+
+  const mockState = await getMockState(page)
+  expect(mockState.invocations.map((call) => call.cmd)).toContain('rename_file')
+  expect(Object.keys(mockState.savedFiles)).toEqual(['/mock/after-rename.excalidraw'])
 })
 
 test('exits the Tauri app from a native close request when clean', async ({ page }) => {
@@ -207,8 +380,13 @@ test('exits the Tauri app from a native close request when clean', async ({ page
 test('warns before exiting from a native close request with unsaved Excalidraw changes', async ({ page }) => {
   await page.goto('/')
 
-  await page.getByLabel('Name').fill('close-warning')
-  await page.waitForTimeout(50)
+  // Save the Mermaid source first so only the converted drawing is dirty.
+  await page.getByRole('tab', { name: 'Mermaid' }).click()
+  await setDocumentName(page, 'Mermaid', 'close-warning')
+  await page.locator('.mermaid-editor textarea').fill(mermaidSource)
+  await page.locator('.workspace-panel:not([hidden])').getByRole('button', { name: /^Save$/ }).click()
+  await expect(page.getByText('Saved close-warning.mmd.')).toBeVisible()
+  await convertMermaid(page, 'close-warning')
   await page.evaluate(() => window.__PLAYWRIGHT_SET_CONFIRM_RESULT__?.(false))
   await emitCloseRequest(page)
 
@@ -228,17 +406,18 @@ test('warns before exiting from a native close request with unsaved Excalidraw c
 test('shows compositor-safe Save feedback after saving Mermaid text', async ({ page }) => {
   await page.goto('/')
 
-  await page.getByRole('button', { name: 'Mermaid' }).click()
-  await page.getByLabel('Name').fill('pulse-flow')
+  await page.getByRole('tab', { name: 'Mermaid' }).click()
+  await setDocumentName(page, 'Mermaid', 'pulse-flow')
   await page.locator('.mermaid-editor textarea').fill(mermaidSource)
 
-  const saveButton = page.getByRole('button', { name: /^Save$/ })
+  const saveButton = page.locator('.workspace-panel:not([hidden])').getByRole('button', { name: /^Save$/ })
   await saveButton.click()
 
-  await expect(page.getByText('Saved to /mock/pulse-flow.mmd.')).toBeVisible()
+  await expect(page.getByText('Saved pulse-flow.mmd.')).toBeVisible()
+  await expect(page.getByTestId('mermaid-path')).toHaveAttribute('data-path', '/mock/pulse-flow.mmd')
   await expect(saveButton).toHaveClass(/save-feedback/)
   await expect(saveButton).toHaveCSS('animation-name', 'none')
-  await expect(saveButton).toHaveCSS('transition-property', 'transform')
+  await expect(saveButton).toHaveCSS('transition-property', /transform/)
 
   const mockState = await page.evaluate(() => window.__PLAYWRIGHT_TAURI_MOCK__) as MockState
   expect(mockState.savedFiles['/mock/pulse-flow.mmd']).toBe(mermaidSource)
@@ -254,16 +433,15 @@ test('collapses the sidebar and opens Excalidraw image export', async ({ page })
 
   const sidebarReturn = page.getByRole('button', { name: 'Show sidebar' })
   await expect(sidebarReturn).toHaveCSS('background-color', 'rgb(247, 195, 111)')
+  // The return tab must not cover the toolbar once the sidebar is gone.
   await expect.poll(async () => page.evaluate(() => {
     const button = document.querySelector('.sidebar-return')
-    const title = document.querySelector('.panel-header h1')
-    if (!button || !title) {
+    const toolbar = document.querySelector('.workspace-panel:not([hidden]) .toolbar-document')
+    if (!button || !toolbar) {
       return Number.POSITIVE_INFINITY
     }
-    const buttonRect = button.getBoundingClientRect()
-    const titleRect = title.getBoundingClientRect()
-    return Math.abs(buttonRect.right - titleRect.left)
-  })).toBeLessThanOrEqual(1)
+    return button.getBoundingClientRect().right - toolbar.getBoundingClientRect().left
+  })).toBeLessThanOrEqual(0)
 
   const tabCenter = await page.evaluate(() => {
     const button = document.querySelector('.sidebar-return')
@@ -288,18 +466,12 @@ test('collapses the sidebar and opens Excalidraw image export', async ({ page })
   await sidebarReturn.click()
   await expect(page.locator('.app-shell')).not.toHaveClass(/sidebar-collapsed/)
 
-  await page.getByRole('button', { name: 'Mermaid' }).click()
-  await page.getByLabel('Name').fill('smoke-flow')
-  await page.locator('.mermaid-editor textarea').fill(mermaidSource)
-  await page.getByRole('button', { name: 'Convert & Save Excalidraw' }).click()
-
-  await expect(page.getByRole('button', { name: 'Excalidraw' })).toHaveClass(/active/)
-  await expect(page.getByLabel('File')).toHaveValue('/mock/smoke-flow.excalidraw')
+  await convertMermaid(page, 'smoke-flow')
 
   await expect(page.getByLabel('Transparent background')).toHaveCount(0)
   await page.getByRole('button', { name: 'Export PNG' }).click()
   await expect(page.getByRole('heading', { name: 'Export image' }).first()).toBeVisible()
-  await expect(page.getByText('Background')).toBeVisible()
+  await expect(page.getByText('Background', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Export to PNG' })).toBeVisible()
 
   const mockState = await page.evaluate(() => window.__PLAYWRIGHT_TAURI_MOCK__) as MockState
@@ -311,7 +483,7 @@ test('uses explicit motion properties and honors reduced motion', async ({ page 
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/')
 
-  const tabButton = page.getByRole('button', { name: 'Mermaid' })
+  const tabButton = page.getByRole('tab', { name: 'Mermaid' })
   await expect(tabButton).not.toHaveCSS('transition-property', 'all')
   await expect(tabButton).toHaveCSS('transition-duration', '0.001s')
   await tabButton.click()
@@ -319,11 +491,11 @@ test('uses explicit motion properties and honors reduced motion', async ({ page 
   await page.getByRole('button', { name: 'Hide sidebar' }).click()
   await expect(page.locator('.sidebar')).toHaveCSS('transition-duration', '0.001s')
 
-  await page.getByLabel('Name').fill('accessible-flow')
+  await setDocumentName(page, 'Mermaid', 'accessible-flow')
   await page.locator('.mermaid-editor textarea').fill(mermaidSource)
-  await page.getByRole('button', { name: /^Save$/ }).click()
+  await page.locator('.workspace-panel:not([hidden])').getByRole('button', { name: /^Save$/ }).click()
 
-  const status = page.getByRole('status')
+  const status = page.locator('.workspace-panel:not([hidden])').getByRole('status')
   await expect(status).toHaveAttribute('aria-live', 'polite')
   await expect(status.locator('.status-message')).toHaveCSS('animation-duration', '0.001s')
 })

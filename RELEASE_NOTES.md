@@ -1,5 +1,15 @@
 # Release Notes
 
+## Projects, icon toolbar, and better Mermaid conversion - 2026-08-23
+- Mermaid conversion now measures labels with the real Excalidraw fonts and refits containers, so text no longer overflows its boxes; a **Refit text** action fixes drawings converted earlier.
+- Converting loads the diagram onto the canvas (fit to view) as an unsaved drawing instead of forcing a save dialog; `<br/>` in labels becomes a line break.
+- Both workspaces stay mounted, removing the reload jank when switching between Excalidraw and Mermaid.
+- Mermaid preview supports zoom (pinch / Ctrl+wheel), pan (drag / scroll), fit, and a collapsible code pane.
+- Sidebar has **Recent** and **Projects** tabs. Projects are folders; add, rename, or remove them, browse the diagrams inside, and move recents into a project from the right-click menu.
+- Mermaid frontmatter `title:` is read from files and shown in the toolbar and in the Recent/Projects lists.
+- Global settings dialog (`Cmd/Ctrl+,`) stored in `settings.json`: preview zoom speed and wheel action, fit upscaling, editor font size, recents limit, project scan depth.
+- The Name/File inputs are replaced by an editable title that renames the file on disk, plus an icon toolbar (New, Open, Save, Refit text, Export PNG, Recover backup). `Cmd/Ctrl+S` and `Cmd/Ctrl+O` work in both workspaces.
+
 ## Project overview to date - 2026-05-26
 - Excalibur is a native macOS/Linux desktop app for opening, editing, saving, and launching `.excalidraw` drawings.
 - The Excalidraw workspace includes recent files, unsaved-change prompts, autosave recovery, PNG export, and PNG/JPEG/WebP image import.
