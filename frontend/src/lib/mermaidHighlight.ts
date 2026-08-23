@@ -19,7 +19,7 @@ export function clearSymbolHighlight(container: ParentNode) {
 }
 
 /** The node a label belongs to, so a whole box lights up rather than a word. */
-function highlightTarget(element: Element) {
+export function symbolHighlightTarget(element: Element) {
   return element.closest('g.node, g.root > g, g.actor, .actor') ?? element
 }
 
@@ -55,7 +55,7 @@ export function applySymbolHighlight(
     const wanted = display.trim().toLowerCase()
     for (const element of container.querySelectorAll(TEXT_SELECTOR)) {
       if ((element.textContent ?? '').trim().toLowerCase() === wanted) {
-        matched.add(highlightTarget(element))
+        matched.add(symbolHighlightTarget(element))
       }
     }
   }

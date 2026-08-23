@@ -62,6 +62,11 @@ export const SYMBOL_KIND_LABELS: Record<SymbolKind, string> = {
   text: 'text',
 }
 
+/** One-line description of what a symbol is, e.g. `member of User`. */
+export function symbolKindHint(kind: SymbolKind, owner?: string) {
+  return owner ? `${SYMBOL_KIND_LABELS[kind]} of ${owner}` : SYMBOL_KIND_LABELS[kind]
+}
+
 /**
  * The key symbols group by: case, spaces, underscores and hyphens are noise, so
  * `USER`, `User`, `user_account` and `UserAccount` all collapse together. Dots

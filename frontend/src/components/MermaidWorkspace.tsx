@@ -1,8 +1,10 @@
 import type { KeyboardEvent, RefObject } from 'react'
 import type { PinnedDiagram } from '../lib/mermaidSvg'
 import type { Settings } from '../lib/settings'
+import type { DocumentMode } from '../types'
 import { DocumentToolbar } from './DocumentToolbar'
 import { IconButton } from './IconButton'
+import { ModeToggle } from './ModeToggle'
 import { ZoomPanViewport, type ZoomPanHandle } from './ZoomPanViewport'
 
 type MermaidWorkspaceProps = {
@@ -16,6 +18,8 @@ type MermaidWorkspaceProps = {
   settings: Pick<Settings, 'previewZoomSpeed' | 'previewWheelAction' | 'previewFitUpscale' | 'mermaidEditorFontSize'>
   saveFeedback: boolean
   isConverting: boolean
+  mode: DocumentMode
+  /** Already resolved: view mode forces the code pane shut without losing the preference. */
   editorCollapsed: boolean
   text: string
   /** The rendered preview SVG, pinned to its natural size by `useMermaidDocument`. */
@@ -25,6 +29,9 @@ type MermaidWorkspaceProps = {
   previewRef: RefObject<HTMLDivElement | null>
   viewportRef: RefObject<ZoomPanHandle | null>
   onRename: (name: string) => Promise<void>
+  onToggleMode: () => void
+  /** A click (not a pan) on a rendered node, for the references lookup. */
+  onNodeClick: (target: Element) => void
   onOpen: () => void
   onSave: () => void
   onConvert: () => void
@@ -45,6 +52,7 @@ export function MermaidWorkspace({
   settings,
   saveFeedback,
   isConverting,
+  mode,
   editorCollapsed,
   text,
   diagram,
@@ -52,6 +60,8 @@ export function MermaidWorkspace({
   previewRef,
   viewportRef,
   onRename,
+  onToggleMode,
+  onNodeClick,
   onOpen,
   onSave,
   onConvert,
@@ -63,6 +73,7 @@ export function MermaidWorkspace({
 }: MermaidWorkspaceProps) {
   // Re-fit only when the diagram's footprint changes, so typing doesn't reset the zoom.
   const contentKey = `${Math.round(diagram.width)}x${Math.round(diagram.height)}`
+  const isViewing = mode === 'view'
 
   return (
     <section className="workspace-panel" hidden={hidden} aria-label="Mermaid editor">
@@ -73,14 +84,19 @@ export function MermaidWorkspace({
         dirty={dirty}
         message={message}
         subtitle={subtitle}
+        renameDisabled={isViewing}
         onRename={onRename}
       >
-        <IconButton
-          icon="code"
-          label={editorCollapsed ? 'Show code' : 'Hide code'}
-          active={!editorCollapsed}
-          onClick={onToggleEditor}
-        />
+        <ModeToggle mode={mode} onToggle={onToggleMode} />
+        <span className="toolbar-divider" />
+        {isViewing ? null : (
+          <IconButton
+            icon="code"
+            label={editorCollapsed ? 'Show code' : 'Hide code'}
+            active={!editorCollapsed}
+            onClick={onToggleEditor}
+          />
+        )}
         <IconButton
           icon="fit"
           label="Fit to window"
@@ -89,7 +105,9 @@ export function MermaidWorkspace({
         />
         <span className="toolbar-divider" />
         <IconButton icon="folder-open" label="Open Mermaid file" onClick={onOpen} />
-        <IconButton icon="save" label="Save" primary feedback={saveFeedback} onClick={onSave} />
+        {isViewing ? null : (
+          <IconButton icon="save" label="Save" primary feedback={saveFeedback} onClick={onSave} />
+        )}
         <IconButton
           icon="image"
           label="Export PNG"
@@ -125,6 +143,7 @@ export function MermaidWorkspace({
             zoomSpeed={settings.previewZoomSpeed}
             wheelAction={settings.previewWheelAction}
             maxFitScale={settings.previewFitUpscale ? 2 : 1}
+            onContentClick={onNodeClick}
           >
             <div ref={previewRef} className="diagram" dangerouslySetInnerHTML={{ __html: diagram.markup }} />
           </ZoomPanViewport>

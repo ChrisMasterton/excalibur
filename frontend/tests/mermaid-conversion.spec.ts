@@ -1,6 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { getMockState, installTauriMock, seedBackend, setDocumentName, type MockSeed } from './support'
+import {
+  enterEditMode,
+  getMockState,
+  installTauriMock,
+  seedBackend,
+  setDocumentName,
+  type MockSeed,
+} from './support'
 
 const mermaidSource = readFileSync(new URL('./fixtures/mermaid-smoke.mmd', import.meta.url), 'utf8')
 
@@ -447,11 +454,13 @@ test('opens two files as separate tabs and keeps each one\'s unsaved edits', asy
 
   await page.locator('.file-row-main[title="/mock/project/one.mmd"]').click()
   await expect(page.getByRole('tab', { name: 'one' })).toHaveAttribute('aria-selected', 'true')
+  await enterEditMode(page)
   await page.locator('.mermaid-editor textarea').fill('flowchart TD\n  A[Edited one] --> B[Done]')
 
   await page.locator('.file-row-main[title="/mock/project/two.mmd"]').click()
   await expect(page.getByRole('tab', { name: 'two' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('.mermaid-editor textarea')).toHaveValue('flowchart TD\n  C[Two] --> D[Done]')
+  await enterEditMode(page)
   await page.locator('.mermaid-editor textarea').fill('flowchart TD\n  C[Edited two] --> D[Done]')
 
   // The first file took over the blank startup tab, so it is one tab per file.
@@ -657,6 +666,7 @@ test('takes over the blank startup tab when a file is opened', async ({ page }) 
   await expect(page.getByRole('tab', { name: 'Untitled' })).toHaveCount(0)
 
   // A tab with content is never recycled.
+  await enterEditMode(page)
   await page.locator('.mermaid-editor textarea').fill('flowchart TD\n  A[Edited] --> B[Done]')
   await page.locator('.file-row-main[title="/mock/project/two.mmd"]').click()
   await expect(page.locator('.document-tab')).toHaveCount(2)

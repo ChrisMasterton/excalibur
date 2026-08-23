@@ -3,7 +3,8 @@ import mermaid from 'mermaid'
 import type { ZoomPanHandle } from '../components/ZoomPanViewport'
 import { INITIAL_MERMAID_TEXT, mermaidHistoryReducer } from '../lib/mermaidHistory'
 import { applySymbolHighlight, clearSymbolHighlight } from '../lib/mermaidHighlight'
-import { initializeMermaid } from '../lib/mermaidSymbols'
+import { extractMermaidSymbols, initializeMermaid, type MermaidExtraction } from '../lib/mermaidSymbols'
+import { pickMermaidSymbol, type PickedSymbol } from '../lib/symbolPick'
 import type { SymbolLocator } from '../lib/symbols'
 import {
   DIAGRAM_PAPER_BACKGROUND,
@@ -332,6 +333,29 @@ export function useMermaidDocument({
 
   const clearHighlight = useCallback(() => setHighlight(null), [])
 
+  /** Parsed symbols for the source as it stands, kept so clicking is not a re-parse each time. */
+  const extractionRef = useRef<{ text: string; extraction: MermaidExtraction | null } | null>(null)
+
+  /**
+   * Which symbol a click in the preview landed on. Works in both modes: reading
+   * the diagram is what the preview is for, whether or not the source is open.
+   */
+  const resolveSymbolAt = useCallback(async (target: Element): Promise<PickedSymbol | null> => {
+    const container = previewRef.current
+    if (!container || !container.contains(target)) {
+      return null
+    }
+    const source = historyRef.current.text.replace(/^\uFEFF/, '').trim()
+    if (!source) {
+      return null
+    }
+    if (extractionRef.current?.text !== source) {
+      extractionRef.current = { text: source, extraction: await extractMermaidSymbols(source) }
+    }
+    const symbols = extractionRef.current.extraction?.symbols
+    return symbols?.length ? pickMermaidSymbol(target, symbols) : null
+  }, [])
+
   // Re-runs whenever the preview is re-rendered, so the marks survive a re-parse.
   useEffect(() => {
     const container = previewRef.current
@@ -403,6 +427,8 @@ export function useMermaidDocument({
     viewportRef,
     highlightSymbol,
     clearHighlight,
+    hasHighlight: highlight !== null,
+    resolveSymbolAt,
     setMessage,
     setConverting: setIsConverting,
     getLiveId,

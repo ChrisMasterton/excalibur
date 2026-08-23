@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
+import { isClickWithoutDrag } from '../lib/pointer'
 import { IconButton } from './IconButton'
 
 /** A box in the content's own (unscaled) coordinate space. */
@@ -42,6 +43,8 @@ type ZoomPanViewportProps = {
   zoomSpeed?: number
   /** What a plain wheel does; Ctrl/Cmd+wheel always does the other one. */
   wheelAction?: 'pan' | 'zoom'
+  /** A press and release in the same place: a click on the content, not a pan. */
+  onContentClick?: (target: Element) => void
 }
 
 const ZOOM_STEP = 1.25
@@ -67,6 +70,7 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
     maxFitScale = 1,
     zoomSpeed = 1,
     wheelAction = 'pan',
+    onContentClick,
   },
   ref,
 ) {
@@ -75,7 +79,15 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
   const contentRef = useRef<HTMLDivElement | null>(null)
   const transformRef = useRef<Transform>(INITIAL_TRANSFORM)
   const autoFitRef = useRef(true)
-  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null)
+  const dragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    originX: number
+    originY: number
+    /** The element under the press; pointer capture retargets the release to the viewport. */
+    target: Element | null
+  } | null>(null)
   const [transform, setTransformState] = useState<Transform>(INITIAL_TRANSFORM)
   const [dragging, setDragging] = useState(false)
 
@@ -280,6 +292,7 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       startY: event.clientY,
       originX: current.x,
       originY: current.y,
+      target: event.target instanceof Element ? event.target : null,
     }
     event.currentTarget.setPointerCapture(event.pointerId)
     setDragging(true)
@@ -298,13 +311,23 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
     })
   }
 
-  const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === event.pointerId) {
-      dragRef.current = null
-      setDragging(false)
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId)
-      }
+  const endDrag = (event: ReactPointerEvent<HTMLDivElement>, clicked = false) => {
+    const drag = dragRef.current
+    if (drag?.pointerId !== event.pointerId) {
+      return
+    }
+    dragRef.current = null
+    setDragging(false)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    if (
+      clicked &&
+      drag.target &&
+      onContentClick &&
+      isClickWithoutDrag({ clientX: drag.startX, clientY: drag.startY }, event)
+    ) {
+      onContentClick(drag.target)
     }
   }
 
@@ -314,7 +337,7 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       className={`zoom-pan-viewport${dragging ? ' is-dragging' : ''}${className ? ` ${className}` : ''}`}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
-      onPointerUp={endDrag}
+      onPointerUp={(event) => endDrag(event, true)}
       onPointerCancel={endDrag}
       onDoubleClick={fit}
     >

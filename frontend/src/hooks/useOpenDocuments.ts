@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { MermaidHistoryState } from '../lib/mermaidHistory'
-import type { DiagramKind, ExcalidrawSceneSnapshot, OpenDocument } from '../types'
+import type { DiagramKind, DocumentMode, ExcalidrawSceneSnapshot, OpenDocument } from '../types'
 
 /** Editor state an Excalidraw tab carries while it is not the one on the canvas. */
 export type ExcalidrawDocumentCache = {
@@ -24,11 +24,13 @@ export type NewDocumentInput = {
   name?: string
   title?: string | null
   dirty?: boolean
+  /** Defaults to `edit`; files read from disk ask for `view`. */
+  mode?: DocumentMode
   excalidraw?: ExcalidrawDocumentCache
   mermaid?: MermaidDocumentCache
 }
 
-export type DocumentPatch = Partial<Pick<OpenDocument, 'path' | 'name' | 'title' | 'dirty'>>
+export type DocumentPatch = Partial<Pick<OpenDocument, 'path' | 'name' | 'title' | 'dirty' | 'mode'>>
 
 export type StoredOpenDocument = { kind: DiagramKind; path: string }
 export type StoredOpenDocuments = { documents: StoredOpenDocument[]; activeIndex: number }
@@ -124,6 +126,7 @@ export function useOpenDocuments() {
       name: input.name ?? '',
       title: input.title ?? null,
       dirty: input.dirty ?? false,
+      mode: input.mode ?? 'edit',
     }
     if (input.excalidraw) {
       excalidrawCacheRef.current.set(document.id, input.excalidraw)

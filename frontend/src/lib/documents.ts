@@ -50,7 +50,10 @@ export function excalidrawSnapshotFromContents(contents: string): ExcalidrawScen
   }
 }
 
-/** Tab contents for a file that was just read from disk. */
+/**
+ * Tab contents for a file that was just read from disk. Existing files are for
+ * reading first, so they open in view mode whichever route brought them in.
+ */
 export function documentInputForFile(kind: DiagramKind, file: OpenFileResponse): NewDocumentInput {
   if (kind === 'excalidraw') {
     const snapshot = excalidrawSnapshotFromContents(file.contents)
@@ -58,6 +61,7 @@ export function documentInputForFile(kind: DiagramKind, file: OpenFileResponse):
       kind,
       path: file.path,
       name: file.name ? fileStem(file.name) : fileStem(file.path),
+      mode: 'view',
       excalidraw: { scene: snapshot, persistedScene: snapshot, saveDirectory: null },
     }
   }
@@ -66,6 +70,7 @@ export function documentInputForFile(kind: DiagramKind, file: OpenFileResponse):
     path: file.path,
     name: fileStem(file.path),
     title: parseMermaidTitle(file.contents),
+    mode: 'view',
     mermaid: {
       history: { text: file.contents, past: [], future: [] },
       persistedText: file.contents,

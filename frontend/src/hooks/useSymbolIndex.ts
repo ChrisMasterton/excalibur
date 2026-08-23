@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { indexFile, searchEntries, type SymbolSearchResult } from '../lib/symbolIndex'
+import {
+  collectSymbolDocuments,
+  indexFile,
+  searchEntries,
+  type SymbolSearchResult,
+} from '../lib/symbolIndex'
 import type { SymbolEntry } from '../lib/symbols'
 import { api } from '../lib/tauri'
 import type { ProjectFile, ProjectItem } from '../types'
@@ -131,5 +136,30 @@ export function useSymbolIndex({ projects, refreshToken }: UseSymbolIndexOptions
     [entriesByProject, projects],
   )
 
-  return { status, ensureIndex, search }
+  /** The registered project a path lives in (the deepest one, if they nest). */
+  const findProject = useCallback(
+    (path: string | null) => {
+      if (!path) {
+        return null
+      }
+      let match: ProjectItem | null = null
+      for (const project of projects) {
+        const inside = path === project.path || path.startsWith(`${project.path}/`) || path.startsWith(`${project.path}\\`)
+        if (inside && (!match || project.path.length > match.path.length)) {
+          match = project
+        }
+      }
+      return match
+    },
+    [projects],
+  )
+
+  /** Every document in one project that mentions an exact symbol key. */
+  const documentsForSymbol = useCallback(
+    (projectPath: string | null, symbol: string) =>
+      projectPath ? collectSymbolDocuments(entriesByProject[projectPath] ?? [], symbol) : [],
+    [entriesByProject],
+  )
+
+  return { status, ensureIndex, search, findProject, documentsForSymbol }
 }

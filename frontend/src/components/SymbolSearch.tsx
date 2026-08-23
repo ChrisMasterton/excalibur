@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { ProjectSearchGroup, SymbolIndexStatus } from '../hooks/useSymbolIndex'
-import { kindIcon } from '../lib/menus'
 import type { SymbolDocumentHit } from '../lib/symbolIndex'
-import { SYMBOL_KIND_LABELS } from '../lib/symbols'
+import { symbolKindHint } from '../lib/symbols'
 import { Icon } from './Icon'
 import { IconButton } from './IconButton'
+import { SymbolHitList } from './SymbolHitList'
 
 const DEBOUNCE_MS = 150
 
@@ -80,23 +80,9 @@ export function SymbolSearch({ status, onEnsureIndex, search, activePath, onSele
             <div key={result.symbol} className="symbol-entry">
               <div className="symbol-entry-head">
                 <span className="symbol-entry-name">{result.display}</span>
-                <span className="symbol-entry-hint">
-                  {result.owner ? `${SYMBOL_KIND_LABELS[result.kind]} of ${result.owner}` : SYMBOL_KIND_LABELS[result.kind]}
-                </span>
+                <span className="symbol-entry-hint">{symbolKindHint(result.kind, result.owner)}</span>
               </div>
-              {result.docs.map((hit) => (
-                <button
-                  key={hit.doc.path}
-                  type="button"
-                  className={`symbol-hit${activePath === hit.doc.path ? ' is-active' : ''}`}
-                  title={hit.doc.path}
-                  onClick={() => onSelect(hit)}
-                >
-                  <Icon name={kindIcon(hit.doc.kind)} size={15} className="symbol-hit-icon" />
-                  <span className="symbol-hit-name">{hit.doc.title}</span>
-                  <span className="symbol-hit-count">{hit.count}</span>
-                </button>
-              ))}
+              <SymbolHitList hits={result.docs} activePath={activePath} onSelect={onSelect} />
             </div>
           ))}
         </div>

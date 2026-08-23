@@ -1,8 +1,11 @@
 import { Excalidraw } from '@excalidraw/excalidraw'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
-import type { ComponentProps, DragEvent, RefObject } from 'react'
+import { useRef, type ComponentProps, type DragEvent, type PointerEvent, type RefObject } from 'react'
+import { isClickWithoutDrag } from '../lib/pointer'
+import type { DocumentMode } from '../types'
 import { DocumentToolbar } from './DocumentToolbar'
 import { IconButton } from './IconButton'
+import { ModeToggle } from './ModeToggle'
 
 export type ExcalidrawChangeHandler = NonNullable<ComponentProps<typeof Excalidraw>['onChange']>
 
@@ -13,11 +16,15 @@ type ExcalidrawWorkspaceProps = {
   dirty: boolean
   message: string
   hasRecovery: boolean
+  mode: DocumentMode
   saveFeedback: boolean
   isRefitting: boolean
   apiReady: boolean
   canvasFrameRef: RefObject<HTMLDivElement | null>
   onRename: (name: string) => Promise<void>
+  onToggleMode: () => void
+  /** A click (not a pan) on the canvas while viewing, for the references lookup. */
+  onCanvasClick: (clientX: number, clientY: number) => void
   onNew: () => void
   onOpen: () => void
   onSave: () => void
@@ -46,11 +53,14 @@ export function ExcalidrawWorkspace({
   dirty,
   message,
   hasRecovery,
+  mode,
   saveFeedback,
   isRefitting,
   apiReady,
   canvasFrameRef,
   onRename,
+  onToggleMode,
+  onCanvasClick,
   onNew,
   onOpen,
   onSave,
@@ -63,6 +73,22 @@ export function ExcalidrawWorkspace({
   onApi,
   onChange,
 }: ExcalidrawWorkspaceProps) {
+  const isViewing = mode === 'view'
+  const pressRef = useRef<{ clientX: number; clientY: number } | null>(null)
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    pressRef.current = event.button === 0 ? { clientX: event.clientX, clientY: event.clientY } : null
+  }
+
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const press = pressRef.current
+    pressRef.current = null
+    // Panning the canvas must not be mistaken for asking about a symbol.
+    if (isViewing && press && isClickWithoutDrag(press, event)) {
+      onCanvasClick(event.clientX, event.clientY)
+    }
+  }
+
   return (
     <section className="workspace-panel" hidden={hidden} aria-label="Excalidraw editor">
       <DocumentToolbar
@@ -72,27 +98,36 @@ export function ExcalidrawWorkspace({
         dirty={dirty}
         message={message}
         note={hasRecovery ? 'Autosave backup available.' : null}
+        renameDisabled={isViewing}
         onRename={onRename}
       >
-        <IconButton icon="file-plus" label="New drawing" onClick={onNew} disabled={!apiReady} />
+        <ModeToggle mode={mode} onToggle={onToggleMode} />
+        <span className="toolbar-divider" />
+        {isViewing ? null : (
+          <IconButton icon="file-plus" label="New drawing" onClick={onNew} disabled={!apiReady} />
+        )}
         <IconButton icon="folder-open" label="Open drawing" onClick={onOpen} />
-        <IconButton
-          icon="save"
-          label="Save"
-          primary
-          feedback={saveFeedback}
-          onClick={onSave}
-          disabled={!apiReady}
-        />
+        {isViewing ? null : (
+          <IconButton
+            icon="save"
+            label="Save"
+            primary
+            feedback={saveFeedback}
+            onClick={onSave}
+            disabled={!apiReady}
+          />
+        )}
         <span className="toolbar-divider" />
         <IconButton icon="fit" label="Fit to window" onClick={onFitToWindow} disabled={!apiReady} />
-        <IconButton
-          icon="text-refit"
-          label="Refit text to containers"
-          onClick={onRefitText}
-          busy={isRefitting}
-          disabled={!apiReady}
-        />
+        {isViewing ? null : (
+          <IconButton
+            icon="text-refit"
+            label="Refit text to containers"
+            onClick={onRefitText}
+            busy={isRefitting}
+            disabled={!apiReady}
+          />
+        )}
         <IconButton icon="image" label="Export PNG" onClick={onExportPng} disabled={!apiReady} />
         {hasRecovery ? (
           <IconButton icon="history" label="Recover backup" className="recover" onClick={onRecover} />
@@ -103,8 +138,17 @@ export function ExcalidrawWorkspace({
         className="canvas-frame"
         onDragOverCapture={onDragOver}
         onDropCapture={onDrop}
+        onPointerDownCapture={handlePointerDown}
+        onPointerUpCapture={handlePointerUp}
       >
-        <Excalidraw excalidrawAPI={onApi} onChange={onChange} UIOptions={UI_OPTIONS} />
+        <Excalidraw
+          excalidrawAPI={onApi}
+          onChange={onChange}
+          UIOptions={UI_OPTIONS}
+          viewModeEnabled={isViewing}
+          // Left undefined while editing so the user's own zen toggle still works.
+          zenModeEnabled={isViewing ? true : undefined}
+        />
       </div>
     </section>
   )

@@ -8,13 +8,14 @@ import { convertMermaidToExcalidrawScene } from '../lib/mermaidConvert'
 import { baseName } from '../lib/paths'
 import type { SymbolDocumentHit } from '../lib/symbolIndex'
 import { api, errorMessage } from '../lib/tauri'
-import type { OpenDocument } from '../types'
+import type { DocumentMode, OpenDocument } from '../types'
 
 type UseDocumentActionsOptions = {
   excalidraw: ExcalidrawDocumentApi
   mermaid: MermaidDocumentApi
   tabs: DocumentTabsApi
   refreshRecents: () => void
+  setDocumentMode: (id: string, mode: DocumentMode) => void
   findByPath: (path: string) => OpenDocument | null
   readExcalidrawCache: (id: string) => ExcalidrawDocumentCache | null
   writeExcalidrawCache: (id: string, cache: ExcalidrawDocumentCache) => void
@@ -30,6 +31,7 @@ export function useDocumentActions({
   mermaid,
   tabs,
   refreshRecents,
+  setDocumentMode,
   findByPath,
   readExcalidrawCache,
   writeExcalidrawCache,
@@ -98,6 +100,8 @@ export function useDocumentActions({
       })
       // Force the canvas to reload the tab now that its cache holds the backup.
       releaseExcalidrawDocument(existing.id)
+      // A backup is unsaved work, so the tab is put back into edit mode for it.
+      setDocumentMode(existing.id, 'edit')
       activateDocument(existing.id, message)
       clearRecoverableAutosave()
       return
@@ -108,6 +112,7 @@ export function useDocumentActions({
       path: recoverableAutosave.path,
       name: recoverableAutosave.name,
       dirty: true,
+      mode: 'edit',
       excalidraw: { scene, persistedScene: null, saveDirectory: null },
     })
     activateDocument(recovered.id, message)
@@ -120,6 +125,7 @@ export function useDocumentActions({
     readExcalidrawCache,
     recoverableAutosave,
     releaseExcalidrawDocument,
+    setDocumentMode,
     snapshotLiveDocuments,
     writeExcalidrawCache,
   ])
@@ -140,6 +146,8 @@ export function useDocumentActions({
           kind: 'excalidraw',
           name: request.name,
           dirty: true,
+          // A conversion is brand new, unsaved work: it opens ready to edit.
+          mode: 'edit',
           excalidraw: {
             scene: excalidrawSnapshotFromContents(serialized),
             persistedScene: null,

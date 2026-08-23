@@ -1,5 +1,12 @@
 # Release Notes
 
+## Reading mode and symbol references - 2026-08-23
+- Diagrams are for reading first: every file opened from disk now lands in **Viewing** mode, with a slim toolbar (mode toggle, Open, Fit to window, Export PNG, and Convert for Mermaid), a read-only file name, the Mermaid code pane closed, and the Excalidraw canvas in view + zen mode.
+- The mode is a labelled toggle in both toolbars that says which mode you are in - **Editing** or **Viewing** - and belongs to the tab, so cycling tabs never changes anyone's mode. `Cmd/Ctrl+Shift+E` flips it (plain `E` is still Excalidraw's eraser). Hiding the code pane in view mode remembers your own Hide-code preference for when you come back.
+- New drawings, Mermaid → Excalidraw conversions, and recovered autosave backups still open ready to edit.
+- **Clicking a symbol** now answers "where else is this?": click a node in the Mermaid preview, or a labelled shape on the Excalidraw canvas while viewing, and a references panel lists every diagram in the same project that mentions it. Clicking an entry opens that document with its matches highlighted and leaves the panel open, so a symbol can be followed across a whole project.
+- Escape peels one layer at a time - the highlight first, then the panel. Clicking empty space does nothing, and a diagram outside every registered project says so rather than listing nothing.
+
 ## Find in project, and Mermaid PNG export - 2026-08-23
 - **Find in project**: a search field above the project list indexes every diagram in every registered project and groups what it finds by *symbol*, so the ER entity `USER`, the class `User`, and the sequence participant `User` are one entry with the documents that mention them.
 - Symbols come from Mermaid's own parser rather than a regex: class names and their members/methods, ER entities and attributes, sequence participants, flowchart nodes (id and label), and states. Excalidraw drawings are read from their text elements; drawings Excalibur converted carry the exact symbol on each shape.

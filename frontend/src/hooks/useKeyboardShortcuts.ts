@@ -8,8 +8,10 @@ type UseKeyboardShortcutsOptions = {
   getCycleTargetId: (step: number) => string | null
   getDocumentIdAt: (index: number) => string | null
   openSettings: () => void
-  /** Escape drops any "Find in project" highlight. */
+  /** Escape: drops the highlight if there is one, else closes the references panel. */
   onClearHighlight: () => void
+  /** Cmd/Ctrl+Shift+E flips the active tab between editing and viewing. */
+  onToggleMode: () => void
   onSaveExcalidraw: () => void
   onOpenExcalidraw: () => void
   onSaveMermaid: () => void
@@ -25,6 +27,7 @@ export function useKeyboardShortcuts({
   getDocumentIdAt,
   openSettings,
   onClearHighlight,
+  onToggleMode,
   onSaveExcalidraw,
   onOpenExcalidraw,
   onSaveMermaid,
@@ -71,6 +74,12 @@ export function useKeyboardShortcuts({
         closeActiveDocument()
         return
       }
+      // Shift is required: plain `E` is Excalidraw's eraser.
+      if (key === 'e' && event.shiftKey) {
+        event.preventDefault()
+        onToggleMode()
+        return
+      }
       if (key === 's') {
         event.preventDefault()
         if (workspace === 'excalidraw') {
@@ -99,6 +108,7 @@ export function useKeyboardShortcuts({
     onOpenMermaid,
     onSaveExcalidraw,
     onSaveMermaid,
+    onToggleMode,
     openSettings,
     workspace,
   ])

@@ -208,6 +208,31 @@ export type SymbolDocumentHit = {
   count: number
 }
 
+/** Files one entry into the per-document hit it belongs to. */
+function addEntryToHits(hits: SymbolDocumentHit[], entry: SymbolEntry) {
+  let hit = hits.find((candidate) => candidate.doc.path === entry.doc.path)
+  if (!hit) {
+    hit = { doc: entry.doc, entries: [], count: 0 }
+    hits.push(hit)
+  }
+  hit.entries.push(entry)
+  hit.count += entry.locators.length
+}
+
+/**
+ * Every document in a project that mentions one exact symbol key, busiest first.
+ * This is what the references panel shows for the symbol a click resolved to.
+ */
+export function collectSymbolDocuments(entries: readonly SymbolEntry[], symbol: string): SymbolDocumentHit[] {
+  const hits: SymbolDocumentHit[] = []
+  for (const entry of entries) {
+    if (entry.symbol === symbol) {
+      addEntryToHits(hits, entry)
+    }
+  }
+  return hits.sort((a, b) => b.count - a.count || a.doc.title.localeCompare(b.doc.title))
+}
+
 export type SymbolSearchResult = {
   symbol: string
   display: string
@@ -239,13 +264,7 @@ export function searchEntries(entries: readonly SymbolEntry[], query: string, li
       }
       bySymbol.set(entry.symbol, result)
     }
-    let hit = result.docs.find((candidate) => candidate.doc.path === entry.doc.path)
-    if (!hit) {
-      hit = { doc: entry.doc, entries: [], count: 0 }
-      result.docs.push(hit)
-    }
-    hit.entries.push(entry)
-    hit.count += entry.locators.length
+    addEntryToHits(result.docs, entry)
   }
 
   const rank = (result: SymbolSearchResult) => {

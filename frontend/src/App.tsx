@@ -5,6 +5,7 @@ import { ExcalidrawWorkspace } from './components/ExcalidrawWorkspace'
 import { MermaidWorkspace } from './components/MermaidWorkspace'
 import { ProjectsPanel } from './components/ProjectsPanel'
 import { RecentList } from './components/RecentList'
+import { ReferencesPanel } from './components/ReferencesPanel'
 import { SettingsDialog } from './components/SettingsDialog'
 import { Sidebar } from './components/Sidebar'
 import { useAppLayout } from './hooks/useAppLayout'
@@ -21,6 +22,7 @@ import { useSaveFeedback } from './hooks/useSaveFeedback'
 import { useSettings } from './hooks/useSettings'
 import { useSidebarData } from './hooks/useSidebarData'
 import { useSymbolIndex } from './hooks/useSymbolIndex'
+import { useSymbolReferences } from './hooks/useSymbolReferences'
 import type { ProjectFile } from './types'
 
 function App() {
@@ -118,6 +120,7 @@ function App() {
     openDocument,
     replaceDocument,
     findPristineDocument,
+    patchDocument,
     closeDocuments,
     setActiveId,
   })
@@ -127,9 +130,19 @@ function App() {
     mermaid,
     tabs,
     refreshRecents: sidebar.refreshRecents,
+    setDocumentMode: tabs.setDocumentMode,
     findByPath,
     readExcalidrawCache,
     writeExcalidrawCache,
+  })
+
+  const references = useSymbolReferences({
+    excalidraw,
+    mermaid,
+    symbolIndex,
+    activeDocument,
+    revealSymbol: actions.revealSymbol,
+    clearHighlight,
   })
 
   const projectActions = useProjectActions({
@@ -164,7 +177,8 @@ function App() {
     getCycleTargetId: tabs.getCycleTargetId,
     getDocumentIdAt: tabs.getDocumentIdAt,
     openSettings: layout.openSettings,
-    onClearHighlight: clearHighlight,
+    onClearHighlight: references.handleEscape,
+    onToggleMode: tabs.toggleActiveMode,
     onSaveExcalidraw: excalidraw.handleSave,
     onOpenExcalidraw: actions.handleOpenExcalidraw,
     onSaveMermaid: mermaid.handleSave,
@@ -225,56 +239,74 @@ function App() {
           onCloseOthers={tabs.closeOtherDocuments}
           onCloseAll={tabs.closeAllDocuments}
         />
-        <ExcalidrawWorkspace
-          hidden={layout.workspace !== 'excalidraw'}
-          title={excalidraw.name}
-          path={excalidraw.path}
-          dirty={excalidraw.dirty}
-          message={excalidraw.message}
-          hasRecovery={Boolean(excalidraw.recoverableAutosave)}
-          saveFeedback={saveButtonFeedback.excalidraw}
-          isRefitting={excalidraw.isRefittingText}
-          apiReady={Boolean(excalidraw.api)}
-          canvasFrameRef={imageImport.canvasFrameRef}
-          onRename={excalidraw.handleRename}
-          onNew={actions.handleNewExcalidraw}
-          onOpen={() => void actions.handleOpenExcalidraw()}
-          onSave={() => void excalidraw.handleSave()}
-          onExportPng={excalidraw.handleExportPng}
-          onFitToWindow={excalidraw.handleFitToWindow}
-          onRefitText={() => void excalidraw.handleRefitText()}
-          onRecover={actions.handleRecoverExcalidraw}
-          onDragOver={imageImport.handleDragOver}
-          onDrop={(event) => void imageImport.handleDrop(event)}
-          onApi={excalidraw.setApi}
-          onChange={excalidraw.handleChange}
-        />
-        <MermaidWorkspace
-          hidden={layout.workspace !== 'mermaid'}
-          title={mermaid.name}
-          path={mermaid.path}
-          dirty={mermaid.dirty}
-          message={mermaid.message}
-          subtitle={mermaid.title}
-          settings={settings}
-          saveFeedback={saveButtonFeedback.mermaid}
-          isConverting={mermaid.isConverting}
-          editorCollapsed={layout.isMermaidEditorCollapsed}
-          text={mermaid.text}
-          diagram={mermaid.diagram}
-          error={mermaid.error}
-          previewRef={mermaid.previewRef}
-          viewportRef={mermaid.viewportRef}
-          onRename={mermaid.handleRename}
-          onOpen={() => void actions.handleOpenMermaid()}
-          onSave={() => void mermaid.handleSave()}
-          onExportPng={() => void mermaid.handleExportPng()}
-          onPreviewPointerDown={clearMermaidHighlight}
-          onConvert={() => void actions.handleConvertMermaidToExcalidraw()}
-          onToggleEditor={layout.toggleMermaidEditor}
-          onTextChange={mermaid.handleTextChange}
-          onKeyDown={mermaid.handleKeyDown}
-        />
+        <div className="workspace-body">
+          <ExcalidrawWorkspace
+            hidden={layout.workspace !== 'excalidraw'}
+            title={excalidraw.name}
+            path={excalidraw.path}
+            dirty={excalidraw.dirty}
+            message={excalidraw.message}
+            hasRecovery={Boolean(excalidraw.recoverableAutosave)}
+            mode={tabs.activeMode}
+            saveFeedback={saveButtonFeedback.excalidraw}
+            isRefitting={excalidraw.isRefittingText}
+            apiReady={Boolean(excalidraw.api)}
+            canvasFrameRef={imageImport.canvasFrameRef}
+            onRename={excalidraw.handleRename}
+            onToggleMode={tabs.toggleActiveMode}
+            onCanvasClick={references.handleExcalidrawClick}
+            onNew={actions.handleNewExcalidraw}
+            onOpen={() => void actions.handleOpenExcalidraw()}
+            onSave={() => void excalidraw.handleSave()}
+            onExportPng={excalidraw.handleExportPng}
+            onFitToWindow={excalidraw.handleFitToWindow}
+            onRefitText={() => void excalidraw.handleRefitText()}
+            onRecover={actions.handleRecoverExcalidraw}
+            onDragOver={imageImport.handleDragOver}
+            onDrop={(event) => void imageImport.handleDrop(event)}
+            onApi={excalidraw.setApi}
+            onChange={excalidraw.handleChange}
+          />
+          <MermaidWorkspace
+            hidden={layout.workspace !== 'mermaid'}
+            title={mermaid.name}
+            path={mermaid.path}
+            dirty={mermaid.dirty}
+            message={mermaid.message}
+            subtitle={mermaid.title}
+            settings={settings}
+            saveFeedback={saveButtonFeedback.mermaid}
+            isConverting={mermaid.isConverting}
+            mode={tabs.activeMode}
+            editorCollapsed={tabs.activeMode === 'view' || layout.isMermaidEditorCollapsed}
+            text={mermaid.text}
+            diagram={mermaid.diagram}
+            error={mermaid.error}
+            previewRef={mermaid.previewRef}
+            viewportRef={mermaid.viewportRef}
+            onRename={mermaid.handleRename}
+            onToggleMode={tabs.toggleActiveMode}
+            onNodeClick={references.handleMermaidClick}
+            onOpen={() => void actions.handleOpenMermaid()}
+            onSave={() => void mermaid.handleSave()}
+            onExportPng={() => void mermaid.handleExportPng()}
+            onPreviewPointerDown={clearMermaidHighlight}
+            onConvert={() => void actions.handleConvertMermaidToExcalidraw()}
+            onToggleEditor={layout.toggleMermaidEditor}
+            onTextChange={mermaid.handleTextChange}
+            onKeyDown={mermaid.handleKeyDown}
+          />
+          <ReferencesPanel
+            symbol={references.symbol}
+            projectName={references.projectName}
+            inProject={references.inProject}
+            isIndexing={references.isIndexing}
+            documents={references.documents}
+            activePath={references.activePath}
+            onSelect={references.select}
+            onClose={references.close}
+          />
+        </div>
       </main>
       <SettingsDialog
         open={layout.isSettingsOpen}

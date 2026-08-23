@@ -3,6 +3,7 @@ import {
   documentDisplayName,
   readStoredOpenDocuments,
   writeStoredOpenDocuments,
+  type DocumentPatch,
   type NewDocumentInput,
 } from './useOpenDocuments'
 import type { ExcalidrawDocumentApi } from './useExcalidrawDocument'
@@ -17,7 +18,7 @@ import {
 import { INITIAL_MERMAID_TEXT } from '../lib/mermaidHistory'
 import { baseName } from '../lib/paths'
 import { api, errorMessage } from '../lib/tauri'
-import type { DiagramKind, OpenDocument, OpenFileResponse } from '../types'
+import type { DiagramKind, DocumentMode, OpenDocument, OpenFileResponse } from '../types'
 
 type OpenPathOptions = { trackRecent?: boolean; activate?: boolean }
 
@@ -36,6 +37,7 @@ type UseDocumentTabsOptions = {
   openDocument: (input: NewDocumentInput) => OpenDocument
   replaceDocument: (id: string, input: NewDocumentInput) => OpenDocument
   findPristineDocument: (kind?: DiagramKind) => OpenDocument | null
+  patchDocument: (id: string | null, patch: DocumentPatch) => void
   closeDocuments: (ids: string[]) => OpenDocument | null
   setActiveId: (id: string | null) => void
 }
@@ -61,6 +63,7 @@ export function useDocumentTabs({
   openDocument,
   replaceDocument,
   findPristineDocument,
+  patchDocument,
   closeDocuments,
   setActiveId,
 }: UseDocumentTabsOptions) {
@@ -388,10 +391,28 @@ export function useDocumentTabs({
     writeStoredOpenDocuments(documents, activeId)
   }, [activeId, documents])
 
+  const activeDocument = documents.find((document) => document.id === activeId) ?? null
+  /** Edit/view belongs to the tab, so cycling tabs never changes anyone's mode. */
+  const activeMode: DocumentMode = activeDocument?.mode ?? 'edit'
+
+  const setDocumentMode = useCallback(
+    (id: string, mode: DocumentMode) => patchDocument(id, { mode }),
+    [patchDocument],
+  )
+
+  const toggleActiveMode = useCallback(() => {
+    if (activeDocument) {
+      setDocumentMode(activeDocument.id, activeDocument.mode === 'view' ? 'edit' : 'view')
+    }
+  }, [activeDocument, setDocumentMode])
+
   const hasUnsavedDocuments = documents.some((document) => document.dirty)
 
   return {
     hasUnsavedDocuments,
+    activeMode,
+    setDocumentMode,
+    toggleActiveMode,
     snapshotLiveDocuments,
     activateDocument,
     createDocument,

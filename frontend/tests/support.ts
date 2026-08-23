@@ -227,6 +227,13 @@ export async function getMockState(page: Page) {
   return (await page.evaluate(() => window.__PLAYWRIGHT_TAURI_MOCK__)) as MockState
 }
 
+/** Existing files open in view mode, so tests that edit one have to ask for the editor. */
+export async function enterEditMode(page: Page) {
+  const panel = page.locator('.workspace-panel:not([hidden])')
+  await panel.getByRole('button', { name: 'Viewing' }).click()
+  await expect(panel.getByRole('button', { name: 'Editing' })).toBeVisible()
+}
+
 /** The toolbar title is an inline editor: click it, type, press Enter. */
 export async function setDocumentName(page: Page, kind: 'Excalidraw' | 'Mermaid', name: string) {
   await page.getByRole('button', { name: `${kind} document name` }).click()

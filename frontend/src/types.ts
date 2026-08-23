@@ -2,6 +2,13 @@ import type { BinaryFileData } from '@excalidraw/excalidraw/types'
 
 export type DiagramKind = 'excalidraw' | 'mermaid'
 
+/**
+ * How a tab is being used. Files opened from disk land in `view` (the app is
+ * mostly used for reading architecture); anything created in the app starts in
+ * `edit`. The mode belongs to the tab, so each one keeps its own.
+ */
+export type DocumentMode = 'edit' | 'view'
+
 export type RecentItem = {
   kind: DiagramKind
   path: string
@@ -22,6 +29,8 @@ export type OpenDocument = {
   /** Display title carried inside the file (Mermaid frontmatter `title:`). */
   title?: string | null
   dirty: boolean
+  /** `view` hides the editing chrome and turns clicks into symbol lookups. */
+  mode: DocumentMode
 }
 
 export type ProjectItem = {

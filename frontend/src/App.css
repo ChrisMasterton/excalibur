@@ -669,7 +669,7 @@
   border: 1px solid transparent;
   border-radius: 9px;
   background: none;
-  color: var(--sidebar-ink);
+  color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -678,6 +678,11 @@
 }
 
 .symbol-hit:hover {
+  background: rgba(13, 15, 18, 0.06);
+  border-color: var(--line);
+}
+
+.sidebar .symbol-hit:hover {
   background: rgba(254, 247, 232, 0.08);
   border-color: rgba(254, 247, 232, 0.14);
 }
@@ -688,12 +693,21 @@
 }
 
 .symbol-hit.is-active {
+  background: rgba(247, 195, 111, 0.32);
+  border-color: rgba(247, 195, 111, 0.6);
+}
+
+.sidebar .symbol-hit.is-active {
   background: rgba(247, 195, 111, 0.14);
   border-color: rgba(247, 195, 111, 0.35);
 }
 
 .symbol-hit-icon {
   flex: none;
+  color: var(--ink-soft);
+}
+
+.sidebar .symbol-hit-icon {
   color: var(--sidebar-ink-soft);
 }
 
@@ -710,6 +724,10 @@
   flex: none;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+.sidebar .symbol-hit-count {
   color: var(--sidebar-ink-faint);
 }
 
@@ -772,12 +790,22 @@
   flex-direction: column;
 }
 
+/* Workspaces sit beside the references panel; only one workspace is ever shown. */
+.workspace-body {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
 .workspace-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
   flex: 1;
   min-height: 0;
+  min-width: 0;
 }
 
 .workspace-panel[hidden] {
@@ -878,6 +906,14 @@
   align-items: center;
   gap: 16px;
   min-height: 48px;
+  container-type: inline-size;
+}
+
+/* A message squeezed to a couple of characters is noise; hide it instead. */
+@container (max-width: 760px) {
+  .toolbar .status {
+    display: none;
+  }
 }
 
 .toolbar-document {
@@ -885,6 +921,7 @@
   align-items: center;
   gap: 12px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .toolbar-title-row .editable-title {
@@ -953,6 +990,7 @@
   color: var(--ink-soft);
   line-height: 1.2;
   min-width: 0;
+  overflow: hidden;
   text-align: right;
 }
 
@@ -960,7 +998,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 42vw;
+  max-width: min(42vw, 100%);
 }
 
 .status-note {
@@ -1049,6 +1087,15 @@
 
 .icon-button.save-feedback {
   --button-scale: 1.06;
+}
+
+.icon-button.mode-toggle {
+  font-weight: 700;
+}
+
+.icon-button.mode-toggle:not(.is-active) {
+  border-color: var(--line);
+  background: rgba(13, 15, 18, 0.04);
 }
 
 .icon-button.recover {
@@ -1270,6 +1317,94 @@
   cursor: pointer;
 }
 
+/* References panel ---------------------------------------------------------- */
+
+.references-panel {
+  flex: none;
+  width: 268px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 14px;
+  border: 1px solid rgba(13, 15, 18, 0.1);
+  background: var(--paper);
+  box-shadow: 0 24px 40px rgba(13, 15, 18, 0.08);
+  overflow: hidden;
+  animation: references-in var(--motion-standard) var(--ease-out);
+}
+
+@keyframes references-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.references-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 10px 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.references-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.references-name {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.references-hint {
+  font-size: 12px;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.references-body {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  padding: 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.references-body .symbol-hit {
+  margin-left: 0;
+}
+
+.references-count {
+  margin: 0;
+  padding: 2px 6px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.references-note {
+  margin: 0;
+  padding: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
 /* Context menu -------------------------------------------------------------- */
 
 .context-menu {
@@ -1459,6 +1594,7 @@
   .status-message,
   .status-note,
   .context-menu,
+  .references-panel,
   .diagram .symbol-highlight {
     animation-duration: 1ms;
   }
@@ -1511,6 +1647,15 @@
   .toolbar-actions {
     justify-self: start;
     flex-wrap: wrap;
+  }
+
+  .workspace-body {
+    flex-direction: column;
+  }
+
+  .references-panel {
+    width: auto;
+    max-height: 40vh;
   }
 
   .mermaid-grid {

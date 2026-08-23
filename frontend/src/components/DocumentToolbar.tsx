@@ -15,6 +15,8 @@ type DocumentToolbarProps = {
   /** Title carried inside the file itself (e.g. Mermaid frontmatter), shown beside the file name. */
   subtitle?: string | null
   note?: string | null
+  /** View mode: the file name is read-only along with the document. */
+  renameDisabled?: boolean
   onRename: (name: string) => void | Promise<void>
   children: ReactNode
 }
@@ -31,6 +33,7 @@ export function DocumentToolbar({
   message,
   subtitle,
   note,
+  renameDisabled = false,
   onRename,
   children,
 }: DocumentToolbarProps) {
@@ -46,6 +49,7 @@ export function DocumentToolbar({
               placeholder="Untitled"
               label={`${kind === 'excalidraw' ? 'Excalidraw' : 'Mermaid'} document name`}
               className="toolbar-title"
+              disabled={renameDisabled}
               onCommit={onRename}
             />
             {subtitle ? (

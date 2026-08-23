@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CaptureUpdateAction, serializeAsJSON } from '@excalidraw/excalidraw'
+import { CaptureUpdateAction, serializeAsJSON, viewportCoordsToSceneCoords } from '@excalidraw/excalidraw'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import type { ExcalidrawChangeHandler } from '../components/ExcalidrawWorkspace'
 import {
@@ -11,6 +11,7 @@ import {
 } from '../lib/autosave'
 import { EMPTY_EXCALIDRAW_CONTENTS } from '../lib/documents'
 import { baseName, fileStem } from '../lib/paths'
+import { pickExcalidrawSymbol, type PickedSymbol } from '../lib/symbolPick'
 import { api, errorMessage } from '../lib/tauri'
 import { ensureExcalidrawFontsLoaded, refitBoundText } from '../lib/textRefit'
 import type {
@@ -449,6 +450,48 @@ export function useExcalidrawDocument({
     return () => window.clearTimeout(timer)
   }, [excalidrawApi, highlight, isVisible])
 
+  /**
+   * Which symbol sits under a screen point on the canvas. Text elements and the
+   * bound labels of containers are what carry names, so those are what is hit
+   * tested; the smallest box wins, which is the label rather than its group.
+   * Rotation is ignored - a plain bounding box is precise enough for a click.
+   */
+  const resolveSymbolAt = useCallback(
+    (clientX: number, clientY: number): PickedSymbol | null => {
+      if (!excalidrawApi) {
+        return null
+      }
+      const appState = excalidrawApi.getAppState()
+      const point = viewportCoordsToSceneCoords({ clientX, clientY }, appState)
+      const elements = excalidrawApi.getSceneElements()
+      const byId = new Map(elements.map((element) => [element.id, element]))
+      const hits = elements
+        .filter(
+          (element) =>
+            point.x >= element.x &&
+            point.x <= element.x + element.width &&
+            point.y >= element.y &&
+            point.y <= element.y + element.height,
+        )
+        .sort((a, b) => a.width * a.height - b.width * b.height)
+
+      for (const element of hits) {
+        const picked = pickExcalidrawSymbol(element)
+        if (picked) {
+          return picked
+        }
+        const boundLabelId = element.boundElements?.find((bound) => bound.type === 'text')?.id
+        const label = boundLabelId ? byId.get(boundLabelId) : undefined
+        const fromLabel = label ? pickExcalidrawSymbol(label) : null
+        if (fromLabel) {
+          return fromLabel
+        }
+      }
+      return null
+    },
+    [excalidrawApi],
+  )
+
   /** Fit the canvas to its contents the next time it becomes visible. */
   const requestFitToContent = useCallback(() => {
     pendingFitToContentRef.current = true
@@ -608,6 +651,8 @@ export function useExcalidrawDocument({
     clearRecoverableAutosave,
     highlightElements,
     clearHighlight,
+    hasHighlight: highlight !== null,
+    resolveSymbolAt,
     requestFitToContent,
     clearPendingContents,
     handleChange,
