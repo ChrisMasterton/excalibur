@@ -89,6 +89,12 @@ On parse or render failures, the command exits nonzero and writes JSON diagnosti
 
 The gear button in the sidebar (or `Cmd/Ctrl+,`) opens global settings: Mermaid preview zoom speed, scroll-wheel behaviour (pan vs zoom), whether *Fit to window* may enlarge small diagrams, editor font size, how many recent files to keep, and project scan depth. They are stored in `settings.json` in the app data folder, so every Excalibur window and instance shares them.
 
+## Coding Agent Prompt
+
+Each project row has a **Coding agent prompt…** action (right-click the project, or the terminal icon on the row). It composes a plain-text prompt to paste into a coding agent such as Claude Code, choosing between an architectural overview, a feature deep-dive, an ER / data model, a sequence for a named flow, or free text.
+
+The prompt carries the project folder's absolute path, the diagrams already in it, and the project's symbol vocabulary from the "Find in project" index, together with an output contract: raw Mermaid `.mmd` files written straight into the folder, each starting with YAML frontmatter `title:`, kebab-case names, no Markdown fences. Copy it with the button or `Cmd/Ctrl+Enter`. Files the agent writes into the folder are immediately openable in Excalibur.
+
 ## File Associations
 
 Excalibur registers as the handler for `.excalidraw` files, so you can double-click them to open directly in the app.

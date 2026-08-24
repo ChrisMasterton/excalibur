@@ -161,5 +161,12 @@ export function useSymbolIndex({ projects, refreshToken }: UseSymbolIndexOptions
     [entriesByProject],
   )
 
-  return { status, ensureIndex, search, findProject, documentsForSymbol }
+  /** Every indexed entry in one project, for callers that want its whole vocabulary. */
+  const entriesFor = useCallback(
+    (projectPath: string | null): SymbolEntry[] =>
+      projectPath ? (entriesByProject[projectPath] ?? []) : [],
+    [entriesByProject],
+  )
+
+  return { status, ensureIndex, search, findProject, documentsForSymbol, entriesFor }
 }

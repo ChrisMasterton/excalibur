@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import './App.css'
+import { AgentPromptDialog } from './components/AgentPromptDialog'
 import { DocumentTabs } from './components/DocumentTabs'
 import { ExcalidrawWorkspace } from './components/ExcalidrawWorkspace'
 import { MermaidWorkspace } from './components/MermaidWorkspace'
@@ -9,6 +10,7 @@ import { ReferencesPanel } from './components/ReferencesPanel'
 import { SettingsDialog } from './components/SettingsDialog'
 import { Sidebar } from './components/Sidebar'
 import { SymbolBoard } from './components/SymbolBoard'
+import { useAgentPrompt } from './hooks/useAgentPrompt'
 import { useAppLayout } from './hooks/useAppLayout'
 import { useDocumentActions } from './hooks/useDocumentActions'
 import { useDocumentTabs } from './hooks/useDocumentTabs'
@@ -34,6 +36,7 @@ function App() {
     projects: sidebar.projects,
     refreshToken: sidebar.projectsRefreshToken,
   })
+  const agentPrompt = useAgentPrompt()
   const { settings, handleSettingsChange } = useSettings()
   const { saveButtonFeedback, showSaveFeedback } = useSaveFeedback()
 
@@ -240,6 +243,7 @@ function App() {
             onRenameProject={projectActions.handleRenameProject}
             onOpenFile={(file: ProjectFile) => tabs.openDiagram(file.kind, file.path)}
             onOpenAllFiles={(project) => void projectActions.handleOpenAllProjectFiles(project)}
+            onAgentPrompt={agentPrompt.open}
             onMoveFile={(file, project) => void projectActions.moveFileToProject(file.path, project)}
             onMoveFileToNewProject={(file) => void projectActions.moveFileToNewProject(file.path)}
             onError={notify}
@@ -336,6 +340,11 @@ function App() {
           onClose={board.close}
         />
       </main>
+      <AgentPromptDialog
+        project={agentPrompt.project}
+        symbolIndex={symbolIndex}
+        onClose={agentPrompt.close}
+      />
       <SettingsDialog
         open={layout.isSettingsOpen}
         settings={settings}
