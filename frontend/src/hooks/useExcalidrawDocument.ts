@@ -126,9 +126,16 @@ export function useExcalidrawDocument({
   const [recoverableAutosave, setRecoverableAutosave] = useState<ExcalidrawAutosave | null>(() =>
     readStoredExcalidrawAutosave(EXCALIDRAW_RECOVERY_KEY),
   )
-  /** Elements a "Find in project" hit asked us to select; `token` re-triggers a repeat request. */
-  const [highlight, setHighlight] = useState<{ elementIds: string[]; token: number } | null>(null)
+  /** Elements a symbol lookup asked us to select; `token` re-triggers a repeat request. */
+  const [highlight, setHighlight] = useState<{
+    elementIds: string[]
+    token: number
+    /** Pan/zoom to the match. False for a highlight that merely follows the active symbol. */
+    focus: boolean
+  } | null>(null)
   const highlightTokenRef = useRef(0)
+  /** The last request the canvas actually scrolled to, so re-renders do not re-pan. */
+  const focusedTokenRef = useRef(0)
 
   const pendingFitToContentRef = useRef(false)
   /** A restored viewport waiting for the canvas to be visible and sized. */
@@ -474,12 +481,14 @@ export function useExcalidrawDocument({
   const getLiveId = useCallback(() => liveIdRef.current, [])
 
   /**
-   * Selects the given elements and zooms to them. Applied once the canvas is
-   * visible and sized, so it survives being called while Mermaid is on screen.
+   * Selects the given elements, and zooms to them when `focus` is asked for.
+   * Applied once the canvas is visible and sized, so it survives being called
+   * while Mermaid is on screen. A highlight that merely follows the active
+   * symbol onto this tab leaves the tab's own viewport alone.
    */
-  const highlightElements = useCallback((elementIds: string[]) => {
+  const highlightElements = useCallback((elementIds: string[], focus = true) => {
     highlightTokenRef.current += 1
-    setHighlight(elementIds.length ? { elementIds, token: highlightTokenRef.current } : null)
+    setHighlight(elementIds.length ? { elementIds, token: highlightTokenRef.current, focus } : null)
   }, [])
 
   const clearHighlight = useCallback(() => {
@@ -499,10 +508,17 @@ export function useExcalidrawDocument({
     if (!targets.length) {
       return
     }
+    // Selection is UI-only: `CaptureUpdateAction.NEVER` keeps it out of undo history,
+    // and `serializeAsJSON` drops `selectedElementIds`, so nothing here can dirty the tab.
     excalidrawApi.updateScene({
       appState: { selectedElementIds: Object.fromEntries(targets.map((element) => [element.id, true])) },
       captureUpdate: CaptureUpdateAction.NEVER,
     })
+    // Only an explicitly chosen match moves the canvas, and only once per request.
+    if (!highlight.focus || focusedTokenRef.current === highlight.token) {
+      return
+    }
+    focusedTokenRef.current = highlight.token
     // The canvas learns its size from a ResizeObserver, so wait for real dimensions.
     let attempts = 0
     let timer = 0

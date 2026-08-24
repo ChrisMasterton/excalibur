@@ -1,5 +1,13 @@
 # Release Notes
 
+## Sticky symbol highlight across tabs - 2026-08-23
+- The symbol you click stays **active** for as long as the references panel is open, and is marked in whatever document you move to next - a tab click, `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Cmd/Ctrl+1`…`9`, or a file in the sidebar. Walking a project's diagrams now shows you the same thing in each of them without touching the panel.
+- Documents that never mention the symbol just show nothing: no marks, no message.
+- A plain tab switch only marks; it never pans or zooms, so the per-tab viewport you left a diagram at is exactly what you come back to. Choosing a document in the panel is still the deliberate act that reveals its match.
+- Picking another symbol replaces the active one everywhere. Closing the panel (✕, or the second Escape) clears the marks from every document that was walked through, and a press in the Mermaid preview no longer drops the active symbol's marks.
+- Editing a highlighted Mermaid diagram re-marks the freshly rendered SVG if the symbol still resolves, and drops the marks silently if it no longer does.
+- Highlights are strictly presentation: the Excalidraw side is selection-only, applied with `CaptureUpdateAction.NEVER` and invisible to `serializeAsJSON` (which drops `selectedElementIds`), so a highlighted drawing never goes dirty, never enters undo history, and never changes what is saved. The Mermaid PNG export rasterises the SVG Mermaid rendered rather than the live preview, so it comes out byte for byte identical whether or not the diagram is highlighted.
+
 ## Per-tab viewports - 2026-08-23
 - Scroll position and zoom now belong to the tab. Switching away and back returns you to exactly what you were looking at, in both workspaces; one tab's zoom no longer leaks into the next.
 - Excalidraw's `serializeAsJSON` deliberately drops scroll and zoom, so the canvas viewport is now read straight from the live app state when a tab is put aside, and re-applied once the canvas is back on screen and measured. Mermaid preview tabs stash the preview's pan/zoom the same way, including whether it is still auto-fitting.

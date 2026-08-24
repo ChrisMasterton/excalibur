@@ -6,7 +6,7 @@ export type MockState = {
   settings: Record<string, unknown>
   confirmMessages: string[]
   recents: Array<{ kind: string; path: string }>
-  savedPngs: Array<{ name: string; path: string; byteLength: number }>
+  savedPngs: Array<{ name: string; path: string; byteLength: number; digest: string }>
   exitCount: number
 }
 
@@ -62,6 +62,16 @@ export async function installTauriMock(page: Page) {
       return baseName.endsWith('.mmd') || baseName.endsWith('.mermaid')
         ? baseName
         : `${baseName}.mmd`
+    }
+
+    /** Cheap FNV-1a over the PNG bytes, so a test can say "the same image came out". */
+    const digestBytes = (bytes) => {
+      let hash = 2166136261
+      for (let index = 0; index < bytes.length; index += 1) {
+        hash ^= bytes[index]
+        hash = Math.imul(hash, 16777619)
+      }
+      return (hash >>> 0).toString(16)
     }
 
     const fileNameFromPath = (path) => {
@@ -188,7 +198,8 @@ export async function installTauriMock(page: Page) {
             const base = trimmed || 'drawing'
             const name = base.toLowerCase().endsWith('.png') ? base : `${base}.png`
             const path = `/mock/${name}`
-            savedPngs.push({ name, path, byteLength: (request.contents ?? []).length })
+            const bytes = request.contents ?? []
+            savedPngs.push({ name, path, byteLength: bytes.length, digest: digestBytes(bytes) })
             return { path }
           }
           case 'load_excalidraw_path':

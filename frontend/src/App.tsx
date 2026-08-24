@@ -88,7 +88,7 @@ function App() {
   const { clearHighlight: clearExcalidrawHighlight } = excalidraw
   const { clearHighlight: clearMermaidHighlight } = mermaid
 
-  /** Escape drops the "Find in project" marks in whichever workspace has them. */
+  /** Drops the symbol marks in both workspaces, whichever one is holding them. */
   const clearHighlight = useCallback(() => {
     clearExcalidrawHighlight()
     clearMermaidHighlight()
@@ -141,6 +141,8 @@ function App() {
     mermaid,
     symbolIndex,
     activeDocument,
+    openSymbolDocument: actions.openSymbolDocument,
+    highlightSymbolHit: actions.highlightSymbolHit,
     revealSymbol: actions.revealSymbol,
     clearHighlight,
   })
@@ -217,7 +219,7 @@ function App() {
             openPaths={openPaths}
             activePath={activePath}
             symbolIndex={symbolIndex}
-            onOpenSymbol={(hit) => void actions.revealSymbol(hit)}
+            onOpenSymbol={references.revealSearchHit}
             onAddProject={() => void projectActions.handleAddProject()}
             onRemoveProject={(project) => void sidebar.removeProject(project)}
             onRenameProject={projectActions.handleRenameProject}
@@ -290,7 +292,7 @@ function App() {
             onOpen={() => void actions.handleOpenMermaid()}
             onSave={() => void mermaid.handleSave()}
             onExportPng={() => void mermaid.handleExportPng()}
-            onPreviewPointerDown={clearMermaidHighlight}
+            onPreviewPointerDown={references.handlePreviewPointerDown}
             onConvert={() => void actions.handleConvertMermaidToExcalidraw()}
             onToggleEditor={layout.toggleMermaidEditor}
             onTextChange={mermaid.handleTextChange}

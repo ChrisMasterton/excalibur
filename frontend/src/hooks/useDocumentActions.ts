@@ -7,6 +7,7 @@ import { excalidrawSnapshotFromContents } from '../lib/documents'
 import { convertMermaidToExcalidrawScene } from '../lib/mermaidConvert'
 import { baseName } from '../lib/paths'
 import type { SymbolDocumentHit } from '../lib/symbolIndex'
+import type { SymbolEntry } from '../lib/symbols'
 import { api, errorMessage } from '../lib/tauri'
 import type { DocumentMode, OpenDocument } from '../types'
 
@@ -181,26 +182,40 @@ export function useDocumentActions({
   ])
 
   /**
-   * Opens (or re-activates) the document a "Find in project" hit points at and
-   * highlights the matches on it. Goes through the tab layer like any other open.
+   * Marks a symbol's matches on the document that is already holding them, in
+   * whichever engine owns that document. `focus` pans and zooms to the marks:
+   * asked for when a document was chosen deliberately, refused when the highlight
+   * is only following the active symbol onto a tab the user switched to.
    */
-  const revealSymbol = useCallback(
-    async (hit: SymbolDocumentHit) => {
-      const locators = hit.entries.flatMap((entry) => entry.locators)
-      const display = hit.entries[0]?.display ?? ''
-      try {
-        const document = await openDiagramPath(hit.doc.kind, hit.doc.path, { trackRecent: false })
-        if (hit.doc.kind === 'excalidraw') {
-          highlightExcalidrawElements(
-            locators.flatMap((locator) => (locator.target === 'excalidraw' ? [locator.elementId] : [])),
-          )
-          return
-        }
-        highlightMermaidSymbol(
-          document.id,
-          locators.filter((locator) => locator.target === 'mermaid'),
-          display,
+  const highlightSymbolHit = useCallback(
+    (document: OpenDocument, entries: readonly SymbolEntry[], focus: boolean) => {
+      const locators = entries.flatMap((entry) => entry.locators)
+      if (document.kind === 'excalidraw') {
+        highlightExcalidrawElements(
+          locators.flatMap((locator) => (locator.target === 'excalidraw' ? [locator.elementId] : [])),
+          focus,
         )
+        return
+      }
+      highlightMermaidSymbol(
+        document.id,
+        locators.filter((locator) => locator.target === 'mermaid'),
+        entries[0]?.display ?? '',
+        focus,
+      )
+    },
+    [highlightExcalidrawElements, highlightMermaidSymbol],
+  )
+
+  /**
+   * Opens (or re-activates) the document behind a symbol hit, without pushing it
+   * into Recent. Goes through the tab layer like any other open; null means the
+   * file could not be read, and the workspace has already said so.
+   */
+  const openSymbolDocument = useCallback(
+    async (hit: SymbolDocumentHit): Promise<OpenDocument | null> => {
+      try {
+        return await openDiagramPath(hit.doc.kind, hit.doc.path, { trackRecent: false })
       } catch (error) {
         console.error('[excalibur] unable to open symbol', hit.doc.path, error)
         const message = errorMessage(error, `Unable to open ${baseName(hit.doc.path)}.`)
@@ -209,15 +224,21 @@ export function useDocumentActions({
         } else {
           setMermaidMessage(message)
         }
+        return null
       }
     },
-    [
-      highlightExcalidrawElements,
-      highlightMermaidSymbol,
-      openDiagramPath,
-      setExcalidrawMessage,
-      setMermaidMessage,
-    ],
+    [openDiagramPath, setExcalidrawMessage, setMermaidMessage],
+  )
+
+  /** Opens the document a "Find in project" hit points at and zooms to the matches. */
+  const revealSymbol = useCallback(
+    async (hit: SymbolDocumentHit) => {
+      const document = await openSymbolDocument(hit)
+      if (document) {
+        highlightSymbolHit(document, hit.entries, true)
+      }
+    },
+    [highlightSymbolHit, openSymbolDocument],
   )
 
   return {
@@ -226,6 +247,8 @@ export function useDocumentActions({
     handleOpenMermaid,
     handleRecoverExcalidraw,
     handleConvertMermaidToExcalidraw,
+    highlightSymbolHit,
+    openSymbolDocument,
     revealSymbol,
   }
 }

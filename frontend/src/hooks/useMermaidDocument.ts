@@ -23,13 +23,15 @@ type MermaidPersistedState = {
   text: string
 }
 
-/** Which nodes of which tab a search hit wants marked. */
+/** Which nodes of which tab a symbol lookup wants marked. */
 export type MermaidHighlightRequest = {
   documentId: string
   locators: SymbolLocator[]
   display: string
   /** Bumped so asking for the same symbol twice still re-runs the pass. */
   token: number
+  /** Pan/zoom to the marks. False for a highlight that merely follows the active symbol. */
+  focus: boolean
 }
 
 /** Everything the Excalidraw side needs to turn the live Mermaid source into a drawing. */
@@ -335,11 +337,16 @@ export function useMermaidDocument({
   )
 
   const highlightTokenRef = useRef(0)
+  /** The last request the preview actually panned to, so a re-render does not re-pan. */
+  const focusedTokenRef = useRef(0)
 
-  const highlightSymbol = useCallback((documentId: string, locators: SymbolLocator[], display: string) => {
-    highlightTokenRef.current += 1
-    setHighlight({ documentId, locators, display, token: highlightTokenRef.current })
-  }, [])
+  const highlightSymbol = useCallback(
+    (documentId: string, locators: SymbolLocator[], display: string, focus = true) => {
+      highlightTokenRef.current += 1
+      setHighlight({ documentId, locators, display, token: highlightTokenRef.current, focus })
+    },
+    [],
+  )
 
   const clearHighlight = useCallback(() => setHighlight(null), [])
 
@@ -366,7 +373,9 @@ export function useMermaidDocument({
     return symbols?.length ? pickMermaidSymbol(target, symbols) : null
   }, [])
 
-  // Re-runs whenever the preview is re-rendered, so the marks survive a re-parse.
+  // Re-runs whenever the preview is re-rendered, so the marks survive a re-parse:
+  // editing a highlighted diagram re-marks the fresh SVG, or silently drops the
+  // marks when the symbol no longer resolves.
   useEffect(() => {
     const container = previewRef.current
     if (!container) {
@@ -377,7 +386,9 @@ export function useMermaidDocument({
       return
     }
     const targets = applySymbolHighlight(container, highlight.locators, highlight.display)
-    if (targets.length) {
+    // Only an explicitly chosen match moves the preview, and only once per request.
+    if (targets.length && highlight.focus && focusedTokenRef.current !== highlight.token) {
+      focusedTokenRef.current = highlight.token
       viewportRef.current?.focusElement(targets)
     }
   }, [diagram, highlight])
