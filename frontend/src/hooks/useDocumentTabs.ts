@@ -123,7 +123,7 @@ export function useDocumentTabs({
         ? openDocument({
             kind,
             name: '',
-            excalidraw: { scene: null, persistedScene: null, saveDirectory: null },
+            excalidraw: { scene: null, persistedScene: null, saveDirectory: null, viewport: null },
           })
         : openDocument({
             kind,
@@ -131,6 +131,7 @@ export function useDocumentTabs({
             mermaid: {
               history: { text: INITIAL_MERMAID_TEXT, past: [], future: [] },
               persistedText: INITIAL_MERMAID_TEXT,
+              viewport: null,
             },
           }),
     [openDocument],

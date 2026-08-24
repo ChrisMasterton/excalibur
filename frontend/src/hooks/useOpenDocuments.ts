@@ -1,6 +1,13 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import type { ZoomPanTransform } from '../components/ZoomPanViewport'
 import type { MermaidHistoryState } from '../lib/mermaidHistory'
-import type { DiagramKind, DocumentMode, ExcalidrawSceneSnapshot, OpenDocument } from '../types'
+import type {
+  DiagramKind,
+  DocumentMode,
+  ExcalidrawSceneSnapshot,
+  ExcalidrawViewport,
+  OpenDocument,
+} from '../types'
 
 /** Editor state an Excalidraw tab carries while it is not the one on the canvas. */
 export type ExcalidrawDocumentCache = {
@@ -10,12 +17,16 @@ export type ExcalidrawDocumentCache = {
   persistedScene: ExcalidrawSceneSnapshot | null
   /** Folder the next save should suggest (Mermaid conversions keep the source folder). */
   saveDirectory: string | null
+  /** Scroll and zoom the canvas had; null until the tab has been looked at. */
+  viewport: ExcalidrawViewport | null
 }
 
 /** Editor state a Mermaid tab carries while it is not the one in the editor. */
 export type MermaidDocumentCache = {
   history: MermaidHistoryState
   persistedText: string
+  /** Preview pan/zoom; null until the tab has been looked at (so it still auto-fits). */
+  viewport: ZoomPanTransform | null
 }
 
 export type NewDocumentInput = {

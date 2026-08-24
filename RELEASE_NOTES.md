@@ -1,5 +1,9 @@
 # Release Notes
 
+## Per-tab viewports - 2026-08-23
+- Scroll position and zoom now belong to the tab. Switching away and back returns you to exactly what you were looking at, in both workspaces; one tab's zoom no longer leaks into the next.
+- Excalidraw's `serializeAsJSON` deliberately drops scroll and zoom, so the canvas viewport is now read straight from the live app state when a tab is put aside, and re-applied once the canvas is back on screen and measured. Mermaid preview tabs stash the preview's pan/zoom the same way, including whether it is still auto-fitting.
+
 ## Reading mode and symbol references - 2026-08-23
 - Diagrams are for reading first: every file opened from disk now lands in **Viewing** mode, with a slim toolbar (mode toggle, Open, Fit to window, Export PNG, and Convert for Mermaid), a read-only file name, the Mermaid code pane closed, and the Excalidraw canvas in view + zen mode.
 - The mode is a labelled toggle in both toolbars that says which mode you are in - **Editing** or **Viewing** - and belongs to the tab, so cycling tabs never changes anyone's mode. `Cmd/Ctrl+Shift+E` flips it (plain `E` is still Excalidraw's eraser). Hiding the code pane in view mode remembers your own Hide-code preference for when you come back.

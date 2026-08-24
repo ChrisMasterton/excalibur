@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CaptureUpdateAction, serializeAsJSON, viewportCoordsToSceneCoords } from '@excalidraw/excalidraw'
-import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
+import type { AppState, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import type { ExcalidrawChangeHandler } from '../components/ExcalidrawWorkspace'
 import {
   EXCALIDRAW_AUTOSAVE_KEY,
@@ -19,6 +19,7 @@ import type {
   ExcalidrawAutosave,
   ExcalidrawData,
   ExcalidrawSceneSnapshot,
+  ExcalidrawViewport,
   OpenDocument,
 } from '../types'
 import type { DocumentPatch, ExcalidrawDocumentCache } from './useOpenDocuments'
@@ -45,6 +46,8 @@ export type ApplyExcalidrawContentsRequest = {
   baseline: ExcalidrawBaseline
   /** Zoom the canvas to the loaded content once it is visible. */
   fitToContent?: boolean
+  /** Scroll/zoom to put back, so a tab returns to where it was left. */
+  viewport?: ExcalidrawViewport | null
 }
 
 type ExcalidrawChangeArgs = Parameters<ExcalidrawChangeHandler>
@@ -64,6 +67,37 @@ type UseExcalidrawDocumentOptions = {
 }
 
 export type ExcalidrawDocumentApi = ReturnType<typeof useExcalidrawDocument>
+
+/**
+ * Runs `action` once the canvas reports real dimensions. It learns its size from
+ * a ResizeObserver only after it becomes visible, so anything that depends on
+ * the viewport has to wait a beat. Returns a cancel function.
+ */
+function whenCanvasSized(api: ExcalidrawImperativeAPI, action: () => void) {
+  let attempts = 0
+  let timer = window.setTimeout(function run() {
+    const { width, height } = api.getAppState()
+    if ((width > 0 && height > 0) || attempts >= 20) {
+      action()
+      return
+    }
+    attempts += 1
+    timer = window.setTimeout(run, 30)
+  }, 30)
+  return () => window.clearTimeout(timer)
+}
+
+/** Puts a stashed scroll/zoom back on the canvas without touching undo history. */
+function applyViewport(api: ExcalidrawImperativeAPI, viewport: ExcalidrawViewport) {
+  api.updateScene({
+    appState: {
+      scrollX: viewport.scrollX,
+      scrollY: viewport.scrollY,
+      zoom: { value: viewport.zoom as AppState['zoom']['value'] },
+    },
+    captureUpdate: CaptureUpdateAction.NEVER,
+  })
+}
 
 /**
  * The one live Excalidraw canvas: what it holds, whether that differs from disk,
@@ -97,6 +131,9 @@ export function useExcalidrawDocument({
   const highlightTokenRef = useRef(0)
 
   const pendingFitToContentRef = useRef(false)
+  /** A restored viewport waiting for the canvas to be visible and sized. */
+  const pendingViewportRef = useRef<ExcalidrawViewport | null>(null)
+  const isVisibleRef = useRef(isVisible)
   const pendingContentsRef = useRef<ApplyExcalidrawContentsRequest | null>(null)
   const pathRef = useRef<string | null>(null)
   const nameRef = useRef('')
@@ -110,6 +147,10 @@ export function useExcalidrawDocument({
   )
   /** Which tab the canvas is currently holding. */
   const liveIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    isVisibleRef.current = isVisible
+  }, [isVisible])
 
   useEffect(() => {
     return () => {
@@ -127,21 +168,15 @@ export function useExcalidrawDocument({
     excalidrawApi.refresh()
     if (pendingFitToContentRef.current) {
       pendingFitToContentRef.current = false
-      // The canvas learns its size from a ResizeObserver after it becomes visible,
-      // so poll briefly for real dimensions before fitting.
-      let attempts = 0
-      let timer = 0
-      const fitWhenSized = () => {
-        const { width, height } = excalidrawApi.getAppState()
-        if ((width > 0 && height > 0) || attempts >= 20) {
-          excalidrawApi.scrollToContent(undefined, { fitToContent: true })
-          return
-        }
-        attempts += 1
-        timer = window.setTimeout(fitWhenSized, 30)
-      }
-      timer = window.setTimeout(fitWhenSized, 30)
-      return () => window.clearTimeout(timer)
+      return whenCanvasSized(excalidrawApi, () =>
+        excalidrawApi.scrollToContent(undefined, { fitToContent: true }),
+      )
+    }
+    // A tab loaded while the canvas was hidden gets its viewport back now.
+    const viewport = pendingViewportRef.current
+    if (viewport) {
+      pendingViewportRef.current = null
+      return whenCanvasSized(excalidrawApi, () => applyViewport(excalidrawApi, viewport))
     }
   }, [excalidrawApi, isSidebarCollapsed, isVisible])
 
@@ -204,7 +239,16 @@ export function useExcalidrawDocument({
 
   const applyContents = useCallback(
     (request: ApplyExcalidrawContentsRequest) => {
-      const { documentId, contents, path: nextPath, name: nextName, message: nextMessage, baseline, fitToContent } = request
+      const {
+        documentId,
+        contents,
+        path: nextPath,
+        name: nextName,
+        message: nextMessage,
+        baseline,
+        fitToContent,
+        viewport,
+      } = request
 
       if (!excalidrawApi) {
         pendingContentsRef.current = request
@@ -249,9 +293,16 @@ export function useExcalidrawDocument({
         liveIdRef.current = documentId
         setDocument(nextPath, normalizedName)
 
+        // Scroll/zoom ride along with the scene so the tab reappears where it was.
+        const nextAppState: Record<string, unknown> = { ...(raw.appState ?? {}) }
+        if (viewport) {
+          nextAppState.scrollX = viewport.scrollX
+          nextAppState.scrollY = viewport.scrollY
+          nextAppState.zoom = { value: viewport.zoom }
+        }
         excalidrawApi.updateScene({
           elements: sanitizedElements as never[],
-          appState: (raw.appState ?? {}) as never,
+          appState: nextAppState as never,
         })
         const files = raw.files ? Object.values(raw.files) : []
         if (files.length) {
@@ -274,6 +325,10 @@ export function useExcalidrawDocument({
         setMessage(nextMessage)
         if (fitToContent) {
           pendingFitToContentRef.current = true
+          pendingViewportRef.current = null
+        } else if (viewport && !isVisibleRef.current) {
+          // A hidden canvas measures 0x0; re-apply once this tab is on screen.
+          pendingViewportRef.current = viewport
         }
         setWorkspace('excalidraw')
       } catch (error) {
@@ -330,6 +385,15 @@ export function useExcalidrawDocument({
     [setCurrentAutosave, updateDirtyState],
   )
 
+  /** The viewport the canvas is showing right now, straight from the live app state. */
+  const readViewport = useCallback((): ExcalidrawViewport | null => {
+    if (!excalidrawApi) {
+      return null
+    }
+    const { scrollX, scrollY, zoom } = excalidrawApi.getAppState()
+    return { scrollX, scrollY, zoom: zoom.value }
+  }, [excalidrawApi])
+
   /** Copies whatever the canvas holds back into its tab, before another tab takes over. */
   const captureIntoCache = useCallback(() => {
     const liveId = liveIdRef.current
@@ -338,9 +402,11 @@ export function useExcalidrawDocument({
         scene: sceneSnapshotRef.current,
         persistedScene: persistedRef.current,
         saveDirectory: saveDirectoryRef.current,
+        // Read from the canvas, not the scene: `serializeAsJSON` strips scroll and zoom.
+        viewport: readViewport() ?? readCache(liveId)?.viewport ?? null,
       })
     }
-  }, [writeCache])
+  }, [readCache, readViewport, writeCache])
 
   const loadDocument = useCallback(
     (document: OpenDocument, nextMessage: string) => {
@@ -357,6 +423,9 @@ export function useExcalidrawDocument({
         name: document.name,
         message: nextMessage,
         baseline: { snapshot: cache?.persistedScene ?? null },
+        viewport: cache?.viewport ?? null,
+        // First look at a drawing fits its content (like Mermaid); afterwards the tab's own viewport wins.
+        fitToContent: !cache?.viewport && (cache?.scene?.hasContent ?? false),
       })
     },
     [applyContents, readCache],
@@ -495,6 +564,7 @@ export function useExcalidrawDocument({
   /** Fit the canvas to its contents the next time it becomes visible. */
   const requestFitToContent = useCallback(() => {
     pendingFitToContentRef.current = true
+    pendingViewportRef.current = null
   }, [])
 
   const clearPendingContents = useCallback(() => {

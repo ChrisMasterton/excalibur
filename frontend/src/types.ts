@@ -78,6 +78,18 @@ export type ExcalidrawAutosave = {
   updatedAt: number
 }
 
+/**
+ * Where a tab's canvas was looking. Excalidraw drops scroll and zoom from
+ * `serializeAsJSON` (they are `export: false` in its storage config), so a tab
+ * has to carry them itself if switching away and back is to return you to the
+ * same place.
+ */
+export type ExcalidrawViewport = {
+  scrollX: number
+  scrollY: number
+  zoom: number
+}
+
 export type ExcalidrawSceneSnapshot = {
   contents: string
   hasContent: boolean

@@ -15,6 +15,14 @@ import { IconButton } from './IconButton'
 /** A box in the content's own (unscaled) coordinate space. */
 export type ContentRect = { x: number; y: number; width: number; height: number }
 
+type Transform = { scale: number; x: number; y: number }
+
+/** A viewport position a caller can stash and hand back later (one per document tab). */
+export type ZoomPanTransform = Transform & {
+  /** True while the viewport still re-fits itself whenever the content changes. */
+  autoFit: boolean
+}
+
 export type ZoomPanHandle = {
   fit: () => void
   reset: () => void
@@ -24,9 +32,11 @@ export type ZoomPanHandle = {
   focusRect: (rect: ContentRect) => void
   /** `focusRect` for one or more rendered elements, measured through the current transform. */
   focusElement: (element: Element | readonly Element[]) => void
+  /** The current pan/zoom, including whether auto-fit is still in charge. */
+  getTransform: () => ZoomPanTransform
+  /** Puts a stashed pan/zoom back, auto-fit flag and all. */
+  setTransform: (transform: ZoomPanTransform) => void
 }
-
-type Transform = { scale: number; x: number; y: number }
 
 type ZoomPanViewportProps = {
   children: ReactNode
@@ -91,7 +101,7 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
   const [transform, setTransformState] = useState<Transform>(INITIAL_TRANSFORM)
   const [dragging, setDragging] = useState(false)
 
-  const setTransform = useCallback(
+  const applyTransform = useCallback(
     (next: Transform) => {
       const scale = clamp(next.scale, minScale, maxScale)
       transformRef.current = { scale, x: next.x, y: next.y }
@@ -122,13 +132,13 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       minScale,
       maxScale,
     )
-    setTransform({
+    applyTransform({
       scale,
       x: (viewportWidth - contentWidth * scale) / 2,
       y: (viewportHeight - contentHeight * scale) / 2,
     })
     autoFitRef.current = true
-  }, [fitPadding, maxFitScale, maxScale, minScale, setTransform])
+  }, [fitPadding, maxFitScale, maxScale, minScale, applyTransform])
 
   const zoomAround = useCallback(
     (factor: number, clientX?: number, clientY?: number) => {
@@ -143,13 +153,13 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       const nextScale = clamp(current.scale * factor, minScale, maxScale)
       const ratio = nextScale / current.scale
       autoFitRef.current = false
-      setTransform({
+      applyTransform({
         scale: nextScale,
         x: px - (px - current.x) * ratio,
         y: py - (py - current.y) * ratio,
       })
     },
-    [maxScale, minScale, setTransform],
+    [maxScale, minScale, applyTransform],
   )
 
   const reset = useCallback(() => {
@@ -159,12 +169,12 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       return
     }
     autoFitRef.current = false
-    setTransform({
+    applyTransform({
       scale: 1,
       x: Math.max(fitPadding, (viewport.clientWidth - content.offsetWidth) / 2),
       y: Math.max(fitPadding, (viewport.clientHeight - content.offsetHeight) / 2),
     })
-  }, [fitPadding, setTransform])
+  }, [fitPadding, applyTransform])
 
   /** Centres `rect` (content coordinates), keeping the current zoom unless it would not fit. */
   const focusRect = useCallback(
@@ -184,13 +194,13 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       )
       const scale = clamp(Math.min(transformRef.current.scale, fitScale), minScale, maxScale)
       autoFitRef.current = false
-      setTransform({
+      applyTransform({
         scale,
         x: viewportWidth / 2 - (rect.x + rect.width / 2) * scale,
         y: viewportHeight / 2 - (rect.y + rect.height / 2) * scale,
       })
     },
-    [fitPadding, maxScale, minScale, setTransform],
+    [fitPadding, maxScale, minScale, applyTransform],
   )
 
   /** Converts rendered elements' screen boxes back into content coordinates, then focuses them. */
@@ -224,6 +234,23 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
     [focusRect],
   )
 
+  const getTransform = useCallback(
+    (): ZoomPanTransform => ({ ...transformRef.current, autoFit: autoFitRef.current }),
+    [],
+  )
+
+  /**
+   * Restores a stashed viewport. Auto-fit is restored too, so a tab the user
+   * never touched keeps re-fitting while one they zoomed stays where they left it.
+   */
+  const setTransform = useCallback(
+    (transform: ZoomPanTransform) => {
+      applyTransform({ scale: transform.scale, x: transform.x, y: transform.y })
+      autoFitRef.current = transform.autoFit
+    },
+    [applyTransform],
+  )
+
   useImperativeHandle(
     ref,
     () => ({
@@ -233,8 +260,10 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       zoomOut: () => zoomAround(1 / zoomStep),
       focusRect,
       focusElement,
+      getTransform,
+      setTransform,
     }),
-    [fit, focusElement, focusRect, reset, zoomAround, zoomStep],
+    [fit, focusElement, focusRect, getTransform, reset, setTransform, zoomAround, zoomStep],
   )
 
   // Re-fit whenever the content is replaced, unless the user has taken control.
@@ -275,11 +304,11 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       }
       const current = transformRef.current
       autoFitRef.current = false
-      setTransform({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY })
+      applyTransform({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY })
     }
     viewport.addEventListener('wheel', handleWheel, { passive: false })
     return () => viewport.removeEventListener('wheel', handleWheel)
-  }, [setTransform, wheelAction, zoomAround, zoomSpeed])
+  }, [applyTransform, wheelAction, zoomAround, zoomSpeed])
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) {
@@ -304,7 +333,7 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       return
     }
     autoFitRef.current = false
-    setTransform({
+    applyTransform({
       ...transformRef.current,
       x: drag.originX + (event.clientX - drag.startX),
       y: drag.originY + (event.clientY - drag.startY),

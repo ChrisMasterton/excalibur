@@ -97,6 +97,8 @@ export function useDocumentActions({
         scene,
         persistedScene: cache?.persistedScene ?? null,
         saveDirectory: cache?.saveDirectory ?? null,
+        // The tab is already on screen; leave it looking where it was.
+        viewport: cache?.viewport ?? null,
       })
       // Force the canvas to reload the tab now that its cache holds the backup.
       releaseExcalidrawDocument(existing.id)
@@ -113,7 +115,7 @@ export function useDocumentActions({
       name: recoverableAutosave.name,
       dirty: true,
       mode: 'edit',
-      excalidraw: { scene, persistedScene: null, saveDirectory: null },
+      excalidraw: { scene, persistedScene: null, saveDirectory: null, viewport: null },
     })
     activateDocument(recovered.id, message)
     clearRecoverableAutosave()
@@ -152,6 +154,8 @@ export function useDocumentActions({
             scene: excalidrawSnapshotFromContents(serialized),
             persistedScene: null,
             saveDirectory: request.saveDirectory,
+            // A fresh conversion is fitted to its contents instead.
+            viewport: null,
           },
         },
         'excalidraw',

@@ -62,7 +62,7 @@ export function documentInputForFile(kind: DiagramKind, file: OpenFileResponse):
       path: file.path,
       name: file.name ? fileStem(file.name) : fileStem(file.path),
       mode: 'view',
-      excalidraw: { scene: snapshot, persistedScene: snapshot, saveDirectory: null },
+      excalidraw: { scene: snapshot, persistedScene: snapshot, saveDirectory: null, viewport: null },
     }
   }
   return {
@@ -74,6 +74,7 @@ export function documentInputForFile(kind: DiagramKind, file: OpenFileResponse):
     mermaid: {
       history: { text: file.contents, past: [], future: [] },
       persistedText: file.contents,
+      viewport: null,
     },
   }
 }

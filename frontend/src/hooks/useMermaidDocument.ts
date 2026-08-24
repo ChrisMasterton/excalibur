@@ -176,6 +176,8 @@ export function useMermaidDocument({
       writeCache(liveId, {
         history: historyRef.current,
         persistedText: persistedRef.current.text,
+        // The viewport is one component shared by every tab, so each tab keeps its own copy.
+        viewport: viewportRef.current?.getTransform() ?? null,
       })
     }
   }, [writeCache])
@@ -189,8 +191,16 @@ export function useMermaidDocument({
       const cache = readCache(document.id) ?? {
         history: { text: INITIAL_MERMAID_TEXT, past: [], future: [] },
         persistedText: INITIAL_MERMAID_TEXT,
+        viewport: null,
       }
       liveIdRef.current = document.id
+      // A tab that has never been looked at goes back to auto-fitting, so one tab's
+      // manual zoom cannot leak into the next. The re-fit lands with its own SVG.
+      if (cache.viewport) {
+        viewportRef.current?.setTransform(cache.viewport)
+      } else {
+        viewportRef.current?.fit()
+      }
       setHighlight(null)
       historyRef.current = cache.history
       dispatch({ type: 'restore', state: cache.history })
