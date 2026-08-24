@@ -124,6 +124,19 @@ test('switching preset rewrites the task, and deep-dive needs its feature first'
   await expect(preview(page)).toHaveValue(/Project folder: \/mock\/domain/)
 })
 
+test('keeps the free-text field focused while typing', async ({ page }) => {
+  await openDialog(page)
+  await page.getByText('Free text').click()
+
+  const task = page.getByRole('textbox', { name: 'Task' })
+  await task.click()
+  await page.keyboard.type('Trace checkout, payment, and receipt delivery.')
+
+  await expect(task).toBeFocused()
+  await expect(task).toHaveValue('Trace checkout, payment, and receipt delivery.')
+  await expect(preview(page)).toHaveValue(/Trace checkout, payment, and receipt delivery\./)
+})
+
 test('copies the prompt with the button and with Cmd/Ctrl+Enter', async ({ page }) => {
   await openDialog(page)
   const prompt = await preview(page).inputValue()

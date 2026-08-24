@@ -83,7 +83,21 @@ On parse or render failures, the command exits nonzero and writes JSON diagnosti
 - **See them all at once**: the grid button in the references panel header opens the **board** - one card per document that mentions the active symbol, each showing that diagram as a thumbnail with the symbol's matches marked in amber (Mermaid nodes highlighted, Excalidraw elements boxed). Cards are ordered by how many matches a document holds, then by title, and the document you are looking at is outlined. Clicking a card closes the board and takes you into that document, zoomed to its match. Escape peels the board first, then the highlight, then the panel; closing the board leaves the tab, the panel, and the marks exactly as they were. Thumbnails are made in the background one at a time, use whatever unsaved tabs currently hold, and are remembered per document so reopening the board is instant; a file that will not load shows a quiet placeholder instead of an error.
 - **Recent** lists the last 10 files. Right-click (or the `…` button) to move a file into a project or remove it from the list.
 - **Find in project** is the search field above the project list. It indexes every diagram in every registered project - classes and their members, ER entities and attributes, sequence participants, flowchart nodes, and states - and groups them by symbol, so `USER`, `User`, and `user_account` are one entry. Results list the documents that mention a symbol; clicking one opens (or re-activates) its tab and highlights the matches: selected elements on the Excalidraw canvas, marked nodes in the Mermaid preview. Escape, or the next click in the preview, clears the marks (a search result ends any symbol walk that was in progress). The index builds on first use and re-reads only the files whose timestamp moved.
-- **Projects** are plain folders. *Add project folder…* registers a folder (the picker can create one), and every `.excalidraw`, `.mmd`, or `.mermaid` file inside it (up to four levels deep) appears under the project. *Open all diagrams* (the folder button on the project row, or the right-click menu) opens the whole project as tabs in one go without filling up Recent. Rename a project to rename the folder; *Remove from projects* only forgets the folder and never deletes files. Dropping a folder onto the window registers it too.
+- **Projects** are plain folders. *Add project folder…* registers a folder (the picker can create one), and every `.excalidraw`, `.mmd`, or `.mermaid` file inside it (up to four levels deep) appears under the project. The full folder path is shown beneath its display name, so identically named folders remain distinguishable. Rename the project display name by clicking it or using the right-click menu; rename a diagram display name from its right-click menu. These labels live in the folder's portable `excalibur.json` and never rename files or folders. *Open all diagrams* (the folder button on the project row, or the right-click menu) opens the whole project as tabs in one go without filling up Recent. *Remove from projects* only forgets the folder and never deletes files. Dropping a folder onto the window registers it too.
+
+Project metadata is an extensible JSON object. Diagram paths are relative to the project folder, and Excalibur preserves fields it does not recognize:
+
+```json
+{
+  "displayName": "FSML architecture",
+  "diagrams": [
+    {
+      "path": "identity/teacher-signup.mmd",
+      "displayName": "Teacher signup and routing"
+    }
+  ]
+}
+```
 
 ## Settings
 

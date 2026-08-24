@@ -104,7 +104,10 @@ function AgentPromptPanel({
         setFiles(
           [...listing]
             .sort((a, b) => a.relative_path.localeCompare(b.relative_path))
-            .map((file) => ({ relativePath: file.relative_path, title: file.title ?? null })),
+            .map((file) => ({
+              relativePath: file.relative_path,
+              title: file.display_name || file.title || null,
+            })),
         )
       })
       .catch((error) => {
@@ -166,9 +169,15 @@ function AgentPromptPanel({
       }
     }
     window.addEventListener('keydown', handleKeyDown)
-    panelRef.current?.querySelector<HTMLElement>('input, textarea, button')?.focus()
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [copy, onClose])
+
+  // Focus the first control only when the panel opens. The shortcut handler above
+  // is resubscribed when the generated prompt changes, which happens on every
+  // keystroke; coupling initial focus to it would steal focus from the text field.
+  useEffect(() => {
+    panelRef.current?.querySelector<HTMLElement>('input, textarea, button')?.focus()
+  }, [])
 
   const field = definition.field
   const setField = (key: keyof AgentPromptInputs, value: string) => {

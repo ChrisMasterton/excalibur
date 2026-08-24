@@ -241,6 +241,9 @@ function App() {
             onAddProject={() => void projectActions.handleAddProject()}
             onRemoveProject={(project) => void sidebar.removeProject(project)}
             onRenameProject={projectActions.handleRenameProject}
+            onRenameFileDisplayName={(project, file, name) =>
+              projectActions.handleRenameProjectFileDisplayName(project, file.path, name)
+            }
             onOpenFile={(file: ProjectFile) => tabs.openDiagram(file.kind, file.path)}
             onOpenAllFiles={(project) => void projectActions.handleOpenAllProjectFiles(project)}
             onAgentPrompt={agentPrompt.open}

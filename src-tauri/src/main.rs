@@ -2,6 +2,7 @@
 
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -9,6 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{async_runtime::channel, AppHandle, Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::DialogExt;
+
+const PROJECT_METADATA_FILE: &str = "excalibur.json";
 
 /// Holds the file path from startup (e.g. double-click in Finder) until the frontend is ready.
 struct PendingFile(Mutex<Option<String>>);
@@ -38,6 +41,9 @@ struct ProjectFile {
     name: String,
     relative_path: String,
     updated_at: u64,
+    /// User-authored label from the project metadata file.
+    display_name: Option<String>,
+    /// Format-owned title, currently Mermaid YAML frontmatter.
     title: Option<String>,
 }
 
@@ -45,6 +51,7 @@ struct ProjectFile {
 struct OpenFileResponse {
     path: String,
     name: Option<String>,
+    display_name: Option<String>,
     contents: String,
 }
 
@@ -134,24 +141,6 @@ fn remove_recent_entry(app: &AppHandle, kind: &str, path: &str) {
     save_recents(app, &recents);
 }
 
-/// Rewrites recents entries whose path starts with `old_prefix` so they point at `new_prefix`.
-fn rewrite_recent_paths(app: &AppHandle, old_prefix: &Path, new_prefix: &Path) {
-    let mut recents = load_recents(app);
-    let mut changed = false;
-    for item in recents.iter_mut() {
-        let item_path = PathBuf::from(&item.path);
-        if let Ok(rest) = item_path.strip_prefix(old_prefix) {
-            let next = new_prefix.join(rest);
-            item.path = next.to_string_lossy().to_string();
-            item.name = file_name(&next);
-            changed = true;
-        }
-    }
-    if changed {
-        save_recents(app, &recents);
-    }
-}
-
 fn settings_path(app: &AppHandle) -> PathBuf {
     app_data_dir(app).join("settings.json")
 }
@@ -191,7 +180,13 @@ fn load_projects(app: &AppHandle) -> Vec<ProjectItem> {
     let Ok(contents) = fs::read_to_string(projects_path(app)) else {
         return Vec::new();
     };
-    serde_json::from_str(&contents).unwrap_or_default()
+    let mut projects: Vec<ProjectItem> = serde_json::from_str(&contents).unwrap_or_default();
+    for project in &mut projects {
+        project.name = project_display_name(Path::new(&project.path)).unwrap_or_else(|| {
+            file_name(Path::new(&project.path)).unwrap_or_else(|| project.name.clone())
+        });
+    }
+    projects
 }
 
 fn save_projects(app: &AppHandle, projects: &[ProjectItem]) {
@@ -199,6 +194,233 @@ fn save_projects(app: &AppHandle, projects: &[ProjectItem]) {
         let _ = fs::create_dir_all(app_data_dir(app));
         let _ = fs::write(projects_path(app), contents);
     }
+}
+
+/// Reads the user-facing name from the project-owned metadata file.
+///
+/// Invalid or missing metadata must not make a registered project disappear; the
+/// folder name remains a safe display fallback until the file is repaired.
+fn project_display_name(folder: &Path) -> Option<String> {
+    let contents = fs::read_to_string(folder.join(PROJECT_METADATA_FILE)).ok()?;
+    let metadata: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    metadata
+        .get("displayName")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
+fn project_diagram_display_names(folder: &Path) -> HashMap<String, String> {
+    let Ok(contents) = fs::read_to_string(folder.join(PROJECT_METADATA_FILE)) else {
+        return HashMap::new();
+    };
+    let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return HashMap::new();
+    };
+    metadata
+        .get("diagrams")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.get("path")?.as_str()?.trim();
+            let display_name = entry.get("displayName")?.as_str()?.trim();
+            if path.is_empty() || display_name.is_empty() {
+                return None;
+            }
+            Some((path.to_string(), display_name.to_string()))
+        })
+        .collect()
+}
+
+fn validate_project_display_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Project name cannot be empty.".to_string());
+    }
+    if trimmed.chars().count() > 120 {
+        return Err("Project name must be 120 characters or fewer.".to_string());
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err("Project name cannot contain control characters.".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Merges the display name into `excalibur.json`, preserving future or
+/// user-authored metadata fields that Excalibur does not understand yet.
+fn project_metadata_for_write(
+    folder: &Path,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let metadata_path = folder.join(PROJECT_METADATA_FILE);
+    if metadata_path.exists() {
+        let contents = fs::read_to_string(&metadata_path).map_err(|error| error.to_string())?;
+        let value: serde_json::Value = serde_json::from_str(&contents)
+            .map_err(|error| format!("{} contains invalid JSON: {error}", metadata_path.display()))?;
+        match value {
+            serde_json::Value::Object(map) => Ok(map),
+            _ => {
+                Err(format!(
+                    "{} must contain a JSON object.",
+                    metadata_path.display()
+                ))
+            }
+        }
+    } else {
+        Ok(serde_json::Map::new())
+    }
+}
+
+fn save_project_metadata(
+    folder: &Path,
+    metadata: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let metadata_path = folder.join(PROJECT_METADATA_FILE);
+    let mut contents = serde_json::to_string_pretty(&metadata).map_err(|error| error.to_string())?;
+    contents.push('\n');
+    fs::write(metadata_path, contents).map_err(|error| error.to_string())
+}
+
+fn write_project_display_name(folder: &Path, name: &str) -> Result<(), String> {
+    let mut metadata = project_metadata_for_write(folder)?;
+    metadata.insert(
+        "displayName".to_string(),
+        serde_json::Value::String(name.to_string()),
+    );
+    save_project_metadata(folder, metadata)
+}
+
+fn portable_relative_path(root: &Path, path: &Path) -> Result<String, String> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| format!("{} is not inside {}.", path.display(), root.display()))?;
+    Ok(relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/"))
+}
+
+fn write_diagram_display_name(root: &Path, path: &Path, name: &str) -> Result<(), String> {
+    if !path.is_file() {
+        return Err(format!("{} no longer exists.", path.display()));
+    }
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    let path = path.canonicalize().map_err(|error| error.to_string())?;
+    let relative_path = portable_relative_path(&root, &path)?;
+    let mut metadata = project_metadata_for_write(&root)?;
+    let diagrams = metadata
+        .entry("diagrams".to_string())
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| "The diagrams field in excalibur.json must be an array.".to_string())?;
+
+    if let Some(entry) = diagrams.iter_mut().find(|entry| {
+        entry.get("path").and_then(serde_json::Value::as_str) == Some(relative_path.as_str())
+    }) {
+        let object = entry
+            .as_object_mut()
+            .ok_or_else(|| "Diagram metadata entries must be JSON objects.".to_string())?;
+        object.insert(
+            "displayName".to_string(),
+            serde_json::Value::String(name.to_string()),
+        );
+    } else {
+        diagrams.push(serde_json::json!({
+            "path": relative_path,
+            "displayName": name,
+        }));
+    }
+    save_project_metadata(&root, metadata)
+}
+
+fn registered_project_root(app: &AppHandle, path: &Path) -> Option<PathBuf> {
+    load_projects(app)
+        .into_iter()
+        .map(|project| PathBuf::from(project.path))
+        .filter(|root| path.strip_prefix(root).is_ok())
+        .max_by_key(|root| root.components().count())
+}
+
+fn diagram_display_name_for_path(app: &AppHandle, path: &Path) -> Option<String> {
+    let root = registered_project_root(app, path)?;
+    let relative_path = portable_relative_path(&root, path).ok()?;
+    project_diagram_display_names(&root).remove(&relative_path)
+}
+
+fn validate_diagram_metadata_relocation(
+    app: &AppHandle,
+    source: &Path,
+    target: &Path,
+) -> Result<(), String> {
+    let roots = [
+        registered_project_root(app, source),
+        registered_project_root(app, target),
+    ];
+    for root in roots.into_iter().flatten() {
+        let metadata = project_metadata_for_write(&root)?;
+        if metadata
+            .get("diagrams")
+            .is_some_and(|diagrams| !diagrams.is_array())
+        {
+            return Err(format!(
+                "The diagrams field in {} must be an array.",
+                root.join(PROJECT_METADATA_FILE).display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Keeps a diagram's metadata attached to it when its real file path changes.
+fn relocate_diagram_metadata(app: &AppHandle, source: &Path, target: &Path) -> Result<(), String> {
+    let Some(source_root) = registered_project_root(app, source) else {
+        return Ok(());
+    };
+    let Some(target_root) = registered_project_root(app, target) else {
+        return Ok(());
+    };
+    let old_relative = portable_relative_path(&source_root, source)?;
+    let new_relative = portable_relative_path(&target_root, target)?;
+    let mut source_metadata = project_metadata_for_write(&source_root)?;
+    let Some(source_diagrams) = source_metadata
+        .get_mut("diagrams")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return Ok(());
+    };
+    let Some(index) = source_diagrams.iter().position(|entry| {
+        entry.get("path").and_then(serde_json::Value::as_str) == Some(old_relative.as_str())
+    }) else {
+        return Ok(());
+    };
+    let mut entry = source_diagrams.remove(index);
+    entry
+        .as_object_mut()
+        .ok_or_else(|| "Diagram metadata entries must be JSON objects.".to_string())?
+        .insert(
+            "path".to_string(),
+            serde_json::Value::String(new_relative.clone()),
+        );
+
+    if source_root == target_root {
+        source_diagrams.push(entry);
+        return save_project_metadata(&source_root, source_metadata);
+    }
+
+    let mut target_metadata = project_metadata_for_write(&target_root)?;
+    let target_diagrams = target_metadata
+        .entry("diagrams".to_string())
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| "The diagrams field in excalibur.json must be an array.".to_string())?;
+    target_diagrams.retain(|candidate| {
+        candidate.get("path").and_then(serde_json::Value::as_str) != Some(new_relative.as_str())
+    });
+    target_diagrams.push(entry);
+    save_project_metadata(&target_root, target_metadata)?;
+    save_project_metadata(&source_root, source_metadata)
 }
 
 fn register_project(app: &AppHandle, folder: &Path) -> Result<ProjectItem, String> {
@@ -212,7 +434,9 @@ fn register_project(app: &AppHandle, folder: &Path) -> Result<ProjectItem, Strin
     }
     let item = ProjectItem {
         path: path_string,
-        name: file_name(folder).unwrap_or_else(|| "Project".to_string()),
+        name: project_display_name(folder)
+            .or_else(|| file_name(folder))
+            .unwrap_or_else(|| "Project".to_string()),
         added_at: now_epoch(),
     };
     projects.push(item.clone());
@@ -272,6 +496,7 @@ fn collect_project_files(
     dir: &Path,
     depth: usize,
     max_depth: usize,
+    display_names: &HashMap<String, String>,
     out: &mut Vec<ProjectFile>,
 ) {
     let Ok(entries) = fs::read_dir(dir) else {
@@ -285,7 +510,7 @@ fn collect_project_files(
         }
         if path.is_dir() {
             if depth < max_depth {
-                collect_project_files(root, &path, depth + 1, max_depth, out);
+                collect_project_files(root, &path, depth + 1, max_depth, display_names, out);
             }
             continue;
         }
@@ -305,6 +530,7 @@ fn collect_project_files(
             .unwrap_or_else(|_| name.clone());
         out.push(ProjectFile {
             kind: kind.to_string(),
+            display_name: display_names.get(&relative_path.replace('\\', "/")).cloned(),
             title: diagram_title(kind, &path),
             path: path.to_string_lossy().to_string(),
             name,
@@ -439,7 +665,8 @@ fn supported_image_mime_type(path: &Path) -> Option<&'static str> {
 fn recents_with_titles(app: &AppHandle) -> Vec<RecentItem> {
     let mut recents = load_recents(app);
     for item in recents.iter_mut() {
-        item.title = diagram_title(&item.kind, Path::new(&item.path));
+        let path = Path::new(&item.path);
+        item.title = diagram_display_name_for_path(app, path).or_else(|| diagram_title(&item.kind, path));
     }
     recents
 }
@@ -507,32 +734,25 @@ fn remove_project(app: AppHandle, path: String) -> Vec<ProjectItem> {
     projects
 }
 
-/// Renames the project folder on disk and rewrites any recents that pointed inside it.
+/// Changes only the project's display name. The folder path and every diagram
+/// inside it stay put; the name travels with the folder in `excalibur.json`.
 #[tauri::command]
 fn rename_project(app: AppHandle, path: String, name: String) -> Result<ProjectItem, String> {
-    let name = sanitize_file_stem(&name)?;
-    let old_path = PathBuf::from(&path);
-    let parent = old_path
-        .parent()
-        .ok_or_else(|| "Project folder has no parent.".to_string())?;
-    let new_path = parent.join(&name);
-    if new_path != old_path {
-        move_path(&old_path, &new_path)?;
-        rewrite_recent_paths(&app, &old_path, &new_path);
+    let name = validate_project_display_name(&name)?;
+    let project_path = PathBuf::from(&path);
+    if !project_path.is_dir() {
+        return Err(format!("{} is not available.", project_path.display()));
     }
-
     let mut projects = load_projects(&app);
-    let new_path_string = new_path.to_string_lossy().to_string();
-    let mut updated: Option<ProjectItem> = None;
-    for item in projects.iter_mut() {
-        if item.path == path {
-            item.path = new_path_string.clone();
-            item.name = name.clone();
-            updated = Some(item.clone());
-        }
-    }
+    let item = projects
+        .iter_mut()
+        .find(|item| item.path == path)
+        .ok_or_else(|| "Project is not registered.".to_string())?;
+    write_project_display_name(&project_path, &name)?;
+    item.name = name;
+    let updated = item.clone();
     save_projects(&app, &projects);
-    updated.ok_or_else(|| "Project is not registered.".to_string())
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -542,13 +762,43 @@ fn list_project_files(app: AppHandle, path: String) -> Result<Vec<ProjectFile>, 
         return Err(format!("{} is not available.", root.display()));
     }
     let mut files = Vec::new();
-    collect_project_files(&root, &root, 0, project_scan_depth(&app), &mut files);
+    let display_names = project_diagram_display_names(&root);
+    collect_project_files(
+        &root,
+        &root,
+        0,
+        project_scan_depth(&app),
+        &display_names,
+        &mut files,
+    );
     files.sort_by(|a, b| {
         a.relative_path
             .to_lowercase()
             .cmp(&b.relative_path.to_lowercase())
     });
     Ok(files)
+}
+
+/// Gives one diagram a project-local display name without renaming the file.
+#[tauri::command]
+fn rename_project_file_display_name(
+    app: AppHandle,
+    project_path: String,
+    path: String,
+    name: String,
+) -> Result<(), String> {
+    let name = validate_project_display_name(&name)?;
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(format!("{} is not available.", root.display()));
+    }
+    if !load_projects(&app)
+        .iter()
+        .any(|project| project.path == project_path)
+    {
+        return Err("Project is not registered.".to_string());
+    }
+    write_diagram_display_name(&root, &PathBuf::from(path), &name)
 }
 
 /// Moves a diagram file into a project folder and returns its new path.
@@ -568,7 +818,18 @@ fn move_file_to_project(app: AppHandle, path: String, project_path: String) -> R
     if target == source {
         return Ok(path);
     }
+    validate_diagram_metadata_relocation(&app, &source, &target)?;
     move_path(&source, &target)?;
+    if let Err(error) = relocate_diagram_metadata(&app, &source, &target) {
+        let rollback = move_path(&target, &source);
+        return Err(match rollback {
+            Ok(()) => error,
+            Err(rollback_error) => format!(
+                "{error} The file was moved to {}, and moving it back also failed: {rollback_error}",
+                target.display()
+            ),
+        });
+    }
     let target_string = target.to_string_lossy().to_string();
     remove_recent_entry(&app, kind, &path);
     update_recents(&app, kind, &target_string, Some(name));
@@ -592,7 +853,18 @@ fn rename_file(app: AppHandle, path: String, name: String) -> Result<String, Str
     if target == source {
         return Ok(path);
     }
+    validate_diagram_metadata_relocation(&app, &source, &target)?;
     move_path(&source, &target)?;
+    if let Err(error) = relocate_diagram_metadata(&app, &source, &target) {
+        let rollback = move_path(&target, &source);
+        return Err(match rollback {
+            Ok(()) => error,
+            Err(rollback_error) => format!(
+                "{error} The file was renamed to {}, and restoring its old name also failed: {rollback_error}",
+                target.display()
+            ),
+        });
+    }
     let target_string = target.to_string_lossy().to_string();
     remove_recent_entry(&app, kind, &path);
     update_recents(&app, kind, &target_string, file_name(&target));
@@ -643,6 +915,7 @@ async fn open_excalidraw_file(app: AppHandle) -> Result<Option<OpenFileResponse>
     Ok(Some(OpenFileResponse {
         path: path_string,
         name,
+        display_name: diagram_display_name_for_path(&app, &path),
         contents,
     }))
 }
@@ -675,6 +948,7 @@ fn load_excalidraw_path(
     Ok(OpenFileResponse {
         path: path_string,
         name,
+        display_name: diagram_display_name_for_path(&app, &path_buf),
         contents,
     })
 }
@@ -800,6 +1074,7 @@ async fn open_mermaid_file(app: AppHandle) -> Result<Option<OpenFileResponse>, S
     Ok(Some(OpenFileResponse {
         path: path_string,
         name,
+        display_name: diagram_display_name_for_path(&app, &path),
         contents,
     }))
 }
@@ -821,6 +1096,7 @@ fn load_mermaid_path(
     Ok(OpenFileResponse {
         path: path_string,
         name,
+        display_name: diagram_display_name_for_path(&app, &path_buf),
         contents,
     })
 }
@@ -900,6 +1176,7 @@ fn main() {
             remove_project,
             rename_project,
             list_project_files,
+            rename_project_file_display_name,
             move_file_to_project,
             rename_file,
             open_excalidraw_file,
@@ -951,7 +1228,12 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::mermaid_frontmatter_title;
+    use super::{
+        mermaid_frontmatter_title, project_diagram_display_names, project_display_name,
+        write_diagram_display_name, write_project_display_name, PROJECT_METADATA_FILE,
+    };
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn reads_title_from_frontmatter() {
@@ -970,5 +1252,46 @@ mod tests {
         assert_eq!(mermaid_frontmatter_title("flowchart TD\n  title: nope"), None);
         assert_eq!(mermaid_frontmatter_title("---\n---\ntitle: later"), None);
         assert_eq!(mermaid_frontmatter_title("---\ntitle:   \n---\n"), None);
+    }
+
+    #[test]
+    fn project_metadata_keeps_project_and_diagram_display_names() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "excalibur-project-metadata-{}-{nonce}",
+            std::process::id()
+        ));
+        let nested = root.join("flows");
+        fs::create_dir_all(&nested).unwrap();
+        let diagram = nested.join("auth.mmd");
+        fs::write(&diagram, "flowchart TD\n  A --> B\n").unwrap();
+        fs::write(
+            root.join(PROJECT_METADATA_FILE),
+            "{\n  \"owner\": \"architecture\"\n}\n",
+        )
+        .unwrap();
+
+        write_project_display_name(&root, "FSML architecture").unwrap();
+        write_diagram_display_name(&root, &diagram, "Teacher signup and routing").unwrap();
+
+        assert_eq!(
+            project_display_name(&root),
+            Some("FSML architecture".to_string())
+        );
+        assert_eq!(
+            project_diagram_display_names(&root).get("flows/auth.mmd"),
+            Some(&"Teacher signup and routing".to_string())
+        );
+        let metadata: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(root.join(PROJECT_METADATA_FILE)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(metadata["owner"], "architecture");
+        assert_eq!(metadata["diagrams"][0]["path"], "flows/auth.mmd");
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

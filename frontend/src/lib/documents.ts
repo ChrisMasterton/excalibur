@@ -61,6 +61,7 @@ export function documentInputForFile(kind: DiagramKind, file: OpenFileResponse):
       kind,
       path: file.path,
       name: file.name ? fileStem(file.name) : fileStem(file.path),
+      title: file.display_name,
       mode: 'view',
       excalidraw: { scene: snapshot, persistedScene: snapshot, saveDirectory: null, viewport: null },
     }
@@ -69,7 +70,7 @@ export function documentInputForFile(kind: DiagramKind, file: OpenFileResponse):
     kind,
     path: file.path,
     name: fileStem(file.path),
-    title: parseMermaidTitle(file.contents),
+    title: file.display_name || parseMermaidTitle(file.contents),
     mode: 'view',
     mermaid: {
       history: { text: file.contents, past: [], future: [] },

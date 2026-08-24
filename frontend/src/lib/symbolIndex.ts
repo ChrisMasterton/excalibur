@@ -75,6 +75,7 @@ export function readExcaliburCustomData(element: unknown): ExcaliburCustomData |
 
 function documentFor(file: ProjectFile, contents: string): SymbolDocument {
   const title =
+    file.display_name?.trim() ||
     file.title?.trim() ||
     (file.kind === 'mermaid' ? parseMermaidTitle(contents)?.trim() : '') ||
     fileStem(file.path)

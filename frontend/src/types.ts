@@ -45,12 +45,16 @@ export type ProjectFile = {
   name: string
   relative_path: string
   updated_at: number
+  /** User-authored label from the project's excalibur.json. */
+  display_name?: string | null
   title?: string | null
 }
 
 export type OpenFileResponse = {
   path: string
   name?: string | null
+  /** Project metadata label, when the file belongs to a registered project. */
+  display_name?: string | null
   contents: string
 }
 

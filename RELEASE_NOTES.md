@@ -1,5 +1,12 @@
 # Release Notes
 
+## Portable project and diagram display names - 2026-08-24
+- Project rows now show their full folder path in small type, making repeated folder names such as `diagrams` immediately distinguishable.
+- Renaming a project now changes only its display name; it no longer moves or renames the folder on disk.
+- Project and individual diagram display names live in an extensible `excalibur.json` inside the project folder. Diagram entries carry project-relative paths, and unrelated metadata fields are preserved.
+- Diagram display names can be edited from each file row's context menu. Mermaid frontmatter titles and file names remain the fallback when no metadata label exists.
+- When a diagram file is renamed or moved through Excalibur, its metadata path moves with it.
+
 ## The symbol board - 2026-08-23
 - **Board** in the references panel header lays out every document that mentions the active symbol side by side, so a symbol's whole footprint can be read at a glance instead of one tab at a time.
 - Each card carries the document's own diagram with the matches marked: Mermaid thumbnails are re-rendered off-DOM and highlighted through the very same node lookup the live preview uses, and Excalidraw thumbnails - which cannot be highlighted during export - get amber boxes drawn over the matched elements, placed with `exportToSvg`'s own coordinate mapping (a scene coordinate shifted by `-min + exportPadding`).

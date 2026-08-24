@@ -541,9 +541,30 @@
   color: var(--accent);
 }
 
-.project-name {
+.project-label {
   flex: 1;
   min-width: 0;
+  display: grid;
+  gap: 0;
+  padding: 3px 0;
+}
+
+.project-name {
+  width: 100%;
+}
+
+.project-path {
+  padding: 0 8px;
+  font-size: 10px;
+  line-height: 1.25;
+  color: var(--sidebar-ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-display-name {
+  width: 100%;
 }
 
 .project-files {

@@ -16,7 +16,7 @@ type EditableTitleProps = {
 
 /**
  * A heading that turns into a text input on click. Shared by document titles
- * (rename on disk) and project rows (rename folder).
+ * (rename on disk) and project display names (stored as metadata).
  */
 export function EditableTitle({
   value,

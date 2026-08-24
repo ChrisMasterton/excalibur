@@ -41,6 +41,8 @@ export async function installTauriMock(page: Page) {
     const confirmMessages = []
     const recents = []
     const savedPngs = []
+    const projectDisplayNames = {}
+    const diagramDisplayNames = {}
     const listeners = {}
     const listenerEntries = {}
     const callbacks = {}
@@ -151,9 +153,26 @@ export async function installTauriMock(page: Page) {
           case 'remove_recent':
             return []
           case 'list_projects':
-            return seed().projects ?? []
+            return (seed().projects ?? []).map((project) => ({
+              ...project,
+              name: projectDisplayNames[project.path] ?? project.name,
+            }))
           case 'list_project_files':
-            return (seed().projectFiles ?? {})[args.path] ?? []
+            return ((seed().projectFiles ?? {})[args.path] ?? []).map((file) => ({
+              ...file,
+              display_name: diagramDisplayNames[file.path] ?? file.display_name,
+            }))
+          case 'rename_project': {
+            projectDisplayNames[args.path] = args.name
+            const project = (seed().projects ?? []).find((item) => item.path === args.path)
+            if (!project) {
+              throw new Error('Project is not registered.')
+            }
+            return { ...project, name: args.name }
+          }
+          case 'rename_project_file_display_name':
+            diagramDisplayNames[args.path] = args.name
+            return null
           case 'load_settings':
             return { ...settings }
           case 'save_settings':
@@ -206,12 +225,16 @@ export async function installTauriMock(page: Page) {
           case 'load_mermaid_path': {
             const path = args.path
             const contents = readFile(path)
+            const projectFile = Object.values(seed().projectFiles ?? {})
+              .flat()
+              .find((file) => file.path === path)
             if (args.trackRecent !== false) {
               trackRecent(cmd === 'load_excalidraw_path' ? 'excalidraw' : 'mermaid', path)
             }
             return {
               path,
               name: fileNameFromPath(path),
+              display_name: diagramDisplayNames[path] ?? projectFile?.display_name ?? null,
               contents,
             }
           }

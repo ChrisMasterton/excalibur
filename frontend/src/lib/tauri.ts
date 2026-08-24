@@ -35,6 +35,8 @@ export const api = {
   renameProject: (path: string, name: string) =>
     invoke<ProjectItem>('rename_project', { path, name }),
   listProjectFiles: (path: string) => invoke<ProjectFile[]>('list_project_files', { path }),
+  renameProjectFileDisplayName: (projectPath: string, path: string, name: string) =>
+    invoke<void>('rename_project_file_display_name', { projectPath, path, name }),
   moveFileToProject: (path: string, projectPath: string) =>
     invoke<string>('move_file_to_project', { path, projectPath }),
   renameFile: (path: string, name: string) => invoke<string>('rename_file', { path, name }),

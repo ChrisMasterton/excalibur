@@ -48,8 +48,8 @@ export function useSymbolIndex({ projects, refreshToken }: UseSymbolIndexOptions
   const [entriesByProject, setEntriesByProject] = useState<Record<string, SymbolEntry[]>>({})
   const [status, setStatus] = useState<SymbolIndexStatus>(IDLE_STATUS)
   const [isRequested, setIsRequested] = useState(false)
-  /** path → the entries last extracted, tagged with the mtime they came from. */
-  const cacheRef = useRef(new Map<string, { updatedAt: number; entries: SymbolEntry[] }>())
+  /** path → extracted entries, tagged with file and display-metadata identity. */
+  const cacheRef = useRef(new Map<string, { signature: string; entries: SymbolEntry[] }>())
   const runIdRef = useRef(0)
 
   /** Starts (or refreshes) the index. Cheap to call repeatedly. */
@@ -57,7 +57,8 @@ export function useSymbolIndex({ projects, refreshToken }: UseSymbolIndexOptions
 
   const readFile = useCallback(async (file: ProjectFile) => {
     const cached = cacheRef.current.get(file.path)
-    if (cached && cached.updatedAt === file.updated_at) {
+    const signature = `${file.updated_at}\0${file.display_name ?? ''}\0${file.title ?? ''}`
+    if (cached && cached.signature === signature) {
       return cached.entries
     }
     try {
@@ -66,11 +67,11 @@ export function useSymbolIndex({ projects, refreshToken }: UseSymbolIndexOptions
           ? await api.loadExcalidrawPath(file.path, false)
           : await api.loadMermaidPath(file.path, false)
       const entries = await indexFile(file, response.contents)
-      cacheRef.current.set(file.path, { updatedAt: file.updated_at, entries })
+      cacheRef.current.set(file.path, { signature, entries })
       return entries
     } catch (error) {
       console.warn('[excalibur] unable to index', file.path, error)
-      cacheRef.current.set(file.path, { updatedAt: file.updated_at, entries: [] })
+      cacheRef.current.set(file.path, { signature, entries: [] })
       return []
     }
   }, [])

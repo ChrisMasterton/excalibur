@@ -118,12 +118,23 @@ export function useProjectActions({
 
   const handleRenameProject = useCallback(
     async (project: ProjectItem, name: string) => {
-      const updated = await api.renameProject(project.path, name)
-      relocateOpenDocuments(project.path, updated.path)
+      await api.renameProject(project.path, name)
       await refreshProjects()
-      refreshRecents()
     },
-    [refreshProjects, refreshRecents, relocateOpenDocuments],
+    [refreshProjects],
+  )
+
+  const handleRenameProjectFileDisplayName = useCallback(
+    async (project: ProjectItem, path: string, name: string) => {
+      await api.renameProjectFileDisplayName(project.path, path, name)
+      const openDocument = findByPath(path)
+      if (openDocument) {
+        patchDocument(openDocument.id, { title: name })
+      }
+      refreshRecents()
+      refreshProjectFiles()
+    },
+    [findByPath, patchDocument, refreshProjectFiles, refreshRecents],
   )
 
   const moveFileToProject = useCallback(
@@ -155,6 +166,7 @@ export function useProjectActions({
     handleOpenAllProjectFiles,
     handleAddProject,
     handleRenameProject,
+    handleRenameProjectFileDisplayName,
     moveFileToProject,
     moveFileToNewProject,
   }

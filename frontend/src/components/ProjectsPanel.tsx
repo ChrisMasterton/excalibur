@@ -31,6 +31,7 @@ type ProjectsPanelProps = {
   onAddProject: () => void
   onRemoveProject: (project: ProjectItem) => void
   onRenameProject: (project: ProjectItem, name: string) => Promise<void>
+  onRenameFileDisplayName: (project: ProjectItem, file: ProjectFile, name: string) => Promise<void>
   onOpenFile: (file: ProjectFile) => void
   /** Opens every diagram in the folder as a tab. */
   onOpenAllFiles: (project: ProjectItem) => void
@@ -60,6 +61,7 @@ export function ProjectsPanel({
   onAddProject,
   onRemoveProject,
   onRenameProject,
+  onRenameFileDisplayName,
   onOpenFile,
   onOpenAllFiles,
   onAgentPrompt,
@@ -70,6 +72,7 @@ export function ProjectsPanel({
   const [expanded, setExpanded] = useState<string[]>(readExpanded)
   const [filesByProject, setFilesByProject] = useState<Record<string, ProjectFilesState>>({})
   const [renaming, setRenaming] = useState<string | null>(null)
+  const [renamingFile, setRenamingFile] = useState<string | null>(null)
   const menu = useContextMenu()
 
   useEffect(() => {
@@ -111,7 +114,7 @@ export function ProjectsPanel({
     menu.open(event, [
       { label: 'Open all diagrams', icon: 'folder-open', onSelect: () => onOpenAllFiles(project) },
       { label: 'Coding agent prompt…', icon: 'terminal', onSelect: () => onAgentPrompt(project) },
-      { label: 'Rename project', icon: 'pencil', onSelect: () => setRenaming(project.path) },
+      { label: 'Rename project display name', icon: 'pencil', onSelect: () => setRenaming(project.path) },
       { label: 'Rescan folder', icon: 'refresh', onSelect: () => void loadFiles(project.path) },
       { separator: true },
       {
@@ -126,6 +129,11 @@ export function ProjectsPanel({
   const openFileMenu = (event: MouseEvent, file: ProjectFile, project: ProjectItem) => {
     menu.open(event, [
       { label: 'Open', icon: kindIcon(file.kind), onSelect: () => onOpenFile(file) },
+      {
+        label: 'Rename diagram display name',
+        icon: 'pencil',
+        onSelect: () => setRenamingFile(file.path),
+      },
       {
         label: 'Move to project',
         icon: 'folder-input',
@@ -174,25 +182,28 @@ export function ProjectsPanel({
                   <Icon name={isExpanded ? 'chevron-down' : 'chevron-right'} size={14} />
                   <Icon name="folder" size={16} className="project-icon" />
                 </button>
-                <EditableTitle
-                  value={project.name}
-                  label={`Project name for ${project.name}`}
-                  className="project-name"
-                  autoEdit={renaming === project.path}
-                  onEditingChange={(editing) => {
-                    if (!editing && renaming === project.path) {
-                      setRenaming(null)
-                    }
-                  }}
-                  onCommit={async (name) => {
-                    try {
-                      await onRenameProject(project, name)
-                    } catch (error) {
-                      onError(errorMessage(error, 'Unable to rename project.'))
-                      throw error
-                    }
-                  }}
-                />
+                <span className="project-label" title={project.path}>
+                  <EditableTitle
+                    value={project.name}
+                    label={`Project display name for ${project.name}`}
+                    className="project-name"
+                    autoEdit={renaming === project.path}
+                    onEditingChange={(editing) => {
+                      if (!editing && renaming === project.path) {
+                        setRenaming(null)
+                      }
+                    }}
+                    onCommit={async (name) => {
+                      try {
+                        await onRenameProject(project, name)
+                      } catch (error) {
+                        onError(errorMessage(error, 'Unable to rename project display name.'))
+                        throw error
+                      }
+                    }}
+                  />
+                  <span className="project-path">{project.path}</span>
+                </span>
                 <IconButton
                   icon="folder-open"
                   label={`Open all diagrams in ${project.name}`}
@@ -224,26 +235,56 @@ export function ProjectsPanel({
                   {state?.files.map((file) => {
                     const open = openPaths.has(file.path)
                     const active = activePath === file.path
+                    const displayName = file.display_name || file.title || file.name
+                    const isRenaming = renamingFile === file.path
                     return (
                       <div
                         key={file.path}
                         className={`file-row is-nested${open ? ' is-open' : ''}${active ? ' is-active' : ''}`}
                         onContextMenu={(event) => openFileMenu(event, file, project)}
                       >
-                        <button
-                          type="button"
-                          className="file-row-main"
-                          onClick={() => onOpenFile(file)}
-                          title={file.path}
-                        >
-                          <Icon name={kindIcon(file.kind)} size={16} className="file-row-icon" />
-                          <span className="file-row-text">
-                            <span className="file-row-name">{file.title || file.name}</span>
-                            {file.title || file.relative_path !== file.name ? (
+                        {isRenaming ? (
+                          <div className="file-row-main" title={file.path}>
+                            <Icon name={kindIcon(file.kind)} size={16} className="file-row-icon" />
+                            <span className="file-row-text">
+                              <EditableTitle
+                                value={displayName}
+                                label={`Diagram display name for ${displayName}`}
+                                className="file-display-name"
+                                autoEdit
+                                onEditingChange={(editing) => {
+                                  if (!editing && renamingFile === file.path) {
+                                    setRenamingFile(null)
+                                  }
+                                }}
+                                onCommit={async (name) => {
+                                  try {
+                                    await onRenameFileDisplayName(project, file, name)
+                                  } catch (error) {
+                                    onError(errorMessage(error, 'Unable to rename diagram display name.'))
+                                    throw error
+                                  }
+                                }}
+                              />
                               <span className="file-row-path">{file.relative_path}</span>
-                            ) : null}
-                          </span>
-                        </button>
+                            </span>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="file-row-main"
+                            onClick={() => onOpenFile(file)}
+                            title={file.path}
+                          >
+                            <Icon name={kindIcon(file.kind)} size={16} className="file-row-icon" />
+                            <span className="file-row-text">
+                              <span className="file-row-name">{displayName}</span>
+                              {file.display_name || file.title || file.relative_path !== file.name ? (
+                                <span className="file-row-path">{file.relative_path}</span>
+                              ) : null}
+                            </span>
+                          </button>
+                        )}
                         <IconButton
                           icon="more"
                           label={`More actions for ${file.name}`}
