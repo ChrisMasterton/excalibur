@@ -24,11 +24,14 @@ export function symbolHighlightTarget(element: Element) {
 }
 
 /**
- * Adds the highlight class to everything matching `locators`, falling back to
- * elements whose rendered text is `display`. Returns what was marked.
+ * The nodes one symbol occupies inside a rendered Mermaid SVG: everything the
+ * `locators` select, falling back to elements whose rendered text is `display`.
+ *
+ * `root` is any `ParentNode`, so this works on the live preview and equally on a
+ * detached SVG parsed off-DOM for a board thumbnail.
  */
-export function applySymbolHighlight(
-  container: ParentNode,
+export function findSymbolElements(
+  root: ParentNode,
   locators: readonly SymbolLocator[],
   display: string,
 ): Element[] {
@@ -41,7 +44,7 @@ export function applySymbolHighlight(
     for (const selector of locator.selectors) {
       let found: NodeListOf<Element>
       try {
-        found = container.querySelectorAll(selector)
+        found = root.querySelectorAll(selector)
       } catch {
         continue
       }
@@ -53,14 +56,26 @@ export function applySymbolHighlight(
 
   if (!matched.size) {
     const wanted = display.trim().toLowerCase()
-    for (const element of container.querySelectorAll(TEXT_SELECTOR)) {
+    for (const element of root.querySelectorAll(TEXT_SELECTOR)) {
       if ((element.textContent ?? '').trim().toLowerCase() === wanted) {
         matched.add(symbolHighlightTarget(element))
       }
     }
   }
 
-  const targets = [...matched]
+  return [...matched]
+}
+
+/**
+ * Adds the highlight class to everything `findSymbolElements` located, so the
+ * app stylesheet lights it up. Returns what was marked.
+ */
+export function applySymbolHighlight(
+  container: ParentNode,
+  locators: readonly SymbolLocator[],
+  display: string,
+): Element[] {
+  const targets = findSymbolElements(container, locators, display)
   for (const element of targets) {
     element.classList.add(SYMBOL_HIGHLIGHT_CLASS)
   }

@@ -14,6 +14,8 @@ type ReferencesPanelProps = {
   documents: readonly SymbolDocumentHit[]
   activePath: string | null
   onSelect: (hit: SymbolDocumentHit) => void
+  /** Opens the board: the same documents as thumbnails, side by side. */
+  onOpenBoard: () => void
   onClose: () => void
 }
 
@@ -30,6 +32,7 @@ export function ReferencesPanel({
   documents,
   activePath,
   onSelect,
+  onOpenBoard,
   onClose,
 }: ReferencesPanelProps) {
   if (!symbol) {
@@ -46,6 +49,13 @@ export function ReferencesPanel({
             {projectName ? ` · ${projectName}` : ''}
           </span>
         </div>
+        <IconButton
+          icon="grid"
+          label="Board"
+          size="sm"
+          disabled={!documents.length}
+          onClick={onOpenBoard}
+        />
         <IconButton icon="x" label="Close references" size="sm" onClick={onClose} />
       </header>
 

@@ -253,3 +253,34 @@ export async function setDocumentName(page: Page, kind: 'Excalidraw' | 'Mermaid'
   await input.press('Enter')
   await expect(page.getByRole('button', { name: `${kind} document name` })).toHaveText(name)
 }
+
+/** Whether the Excalidraw interactive layer has anything painted on it (a selection border). */
+export function hasCanvasSelection(page: Page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('.canvas-frame canvas.interactive')
+    const context = canvas?.getContext('2d')
+    // A hidden workspace measures 0x0 until the canvas has re-measured itself.
+    if (!canvas || !context || !canvas.width || !canvas.height) {
+      return false
+    }
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height)
+    for (let index = 3; index < data.length; index += 4) {
+      if (data[index] !== 0) {
+        return true
+      }
+    }
+    return false
+  })
+}
+
+/** Opens a file from the Projects panel, expanding the project first if it is collapsed. */
+export async function openProjectFile(page: Page, projectName: string, path: string) {
+  await page.getByRole('tab', { name: 'Projects' }).click()
+  const expand = page.getByRole('button', { name: `Expand ${projectName}` })
+  if (await expand.count()) {
+    await expand.click()
+  }
+  const row = page.locator(`.file-row-main[title="${path}"]`)
+  await expect(row).toBeVisible()
+  await row.click()
+}

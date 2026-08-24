@@ -1,4 +1,4 @@
-import type { KeyboardEvent, RefObject } from 'react'
+import { memo, type KeyboardEvent, type RefObject } from 'react'
 import type { PinnedDiagram } from '../lib/mermaidSvg'
 import type { Settings } from '../lib/settings'
 import type { DocumentMode } from '../types'
@@ -41,6 +41,24 @@ type MermaidWorkspaceProps = {
   onTextChange: (text: string) => void
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void
 }
+
+/**
+ * The rendered diagram itself, kept out of its parent's render pass.
+ *
+ * React re-applies `dangerouslySetInnerHTML` whenever the owning component
+ * re-renders, which would wipe the symbol marks the highlight pass writes onto
+ * these nodes. Memoising on the markup means an unrelated re-render leaves the
+ * marked SVG exactly as it is.
+ */
+const MermaidDiagram = memo(function MermaidDiagram({
+  markup,
+  previewRef,
+}: {
+  markup: string
+  previewRef: RefObject<HTMLDivElement | null>
+}) {
+  return <div ref={previewRef} className="diagram" dangerouslySetInnerHTML={{ __html: markup }} />
+})
 
 export function MermaidWorkspace({
   hidden,
@@ -145,7 +163,7 @@ export function MermaidWorkspace({
             maxFitScale={settings.previewFitUpscale ? 2 : 1}
             onContentClick={onNodeClick}
           >
-            <div ref={previewRef} className="diagram" dangerouslySetInnerHTML={{ __html: diagram.markup }} />
+            <MermaidDiagram markup={diagram.markup} previewRef={previewRef} />
           </ZoomPanViewport>
         </div>
       </div>

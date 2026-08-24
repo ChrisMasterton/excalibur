@@ -1,6 +1,14 @@
 import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { enterEditMode, getMockState, installTauriMock, seedBackend, type MockSeed } from './support'
+import {
+  enterEditMode,
+  getMockState,
+  hasCanvasSelection,
+  installTauriMock,
+  openProjectFile as openFile,
+  seedBackend,
+  type MockSeed,
+} from './support'
 
 const PROJECT = { path: '/mock/walk', name: 'Walk', added_at: 1 }
 
@@ -68,15 +76,7 @@ test.beforeEach(async ({ page }) => {
   await installTauriMock(page)
 })
 
-async function openProjectFile(page: Page, path: string) {
-  await page.getByRole('tab', { name: 'Projects' }).click()
-  const expand = page.getByRole('button', { name: `Expand ${PROJECT.name}` })
-  if (await expand.count()) {
-    await expand.click()
-  }
-  await expect(page.locator(`.file-row-main[title="${path}"]`)).toBeVisible()
-  await page.locator(`.file-row-main[title="${path}"]`).click()
-}
+const openProjectFile = (page: Page, path: string) => openFile(page, PROJECT.name, path)
 
 /** Whichever workspace is on screen. */
 const panel = (page: Page) => page.locator('.workspace-panel:not([hidden])')
@@ -84,25 +84,6 @@ const panel = (page: Page) => page.locator('.workspace-panel:not([hidden])')
 /** The preview's pan/zoom as the DOM has it, so a tab switch can be shown not to move it. */
 function viewport(page: Page) {
   return page.locator('.mermaid-preview .zoom-pan-content')
-}
-
-/** Whether the Excalidraw interactive layer has anything painted on it (a selection border). */
-function hasCanvasSelection(page: Page) {
-  return page.evaluate(() => {
-    const canvas = document.querySelector<HTMLCanvasElement>('.canvas-frame canvas.interactive')
-    const context = canvas?.getContext('2d')
-    // A hidden workspace measures 0x0 until the canvas has re-measured itself.
-    if (!canvas || !context || !canvas.width || !canvas.height) {
-      return false
-    }
-    const { data } = context.getImageData(0, 0, canvas.width, canvas.height)
-    for (let index = 3; index < data.length; index += 4) {
-      if (data[index] !== 0) {
-        return true
-      }
-    }
-    return false
-  })
 }
 
 test('the picked symbol follows every tab switch until the panel closes', async ({ page }) => {

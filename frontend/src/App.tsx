@@ -8,6 +8,7 @@ import { RecentList } from './components/RecentList'
 import { ReferencesPanel } from './components/ReferencesPanel'
 import { SettingsDialog } from './components/SettingsDialog'
 import { Sidebar } from './components/Sidebar'
+import { SymbolBoard } from './components/SymbolBoard'
 import { useAppLayout } from './hooks/useAppLayout'
 import { useDocumentActions } from './hooks/useDocumentActions'
 import { useDocumentTabs } from './hooks/useDocumentTabs'
@@ -21,6 +22,7 @@ import { useProjectActions } from './hooks/useProjectActions'
 import { useSaveFeedback } from './hooks/useSaveFeedback'
 import { useSettings } from './hooks/useSettings'
 import { useSidebarData } from './hooks/useSidebarData'
+import { useSymbolBoard } from './hooks/useSymbolBoard'
 import { useSymbolIndex } from './hooks/useSymbolIndex'
 import { useSymbolReferences } from './hooks/useSymbolReferences'
 import type { ProjectFile } from './types'
@@ -147,6 +149,19 @@ function App() {
     clearHighlight,
   })
 
+  const board = useSymbolBoard({
+    symbol: references.symbol,
+    documents: references.documents,
+    activePath: references.activePath,
+    select: references.select,
+    // Escape peels the board first, then the panel's own layers (highlight, panel).
+    onEscape: references.handleEscape,
+    snapshotLiveDocuments: tabs.snapshotLiveDocuments,
+    findByPath,
+    readExcalidrawCache,
+    readMermaidCache,
+  })
+
   const projectActions = useProjectActions({
     excalidraw,
     mermaid,
@@ -179,7 +194,7 @@ function App() {
     getCycleTargetId: tabs.getCycleTargetId,
     getDocumentIdAt: tabs.getDocumentIdAt,
     openSettings: layout.openSettings,
-    onClearHighlight: references.handleEscape,
+    onClearHighlight: board.handleEscape,
     onToggleMode: tabs.toggleActiveMode,
     onSaveExcalidraw: excalidraw.handleSave,
     onOpenExcalidraw: actions.handleOpenExcalidraw,
@@ -306,9 +321,20 @@ function App() {
             documents={references.documents}
             activePath={references.activePath}
             onSelect={references.select}
+            onOpenBoard={board.open}
             onClose={references.close}
           />
         </div>
+        <SymbolBoard
+          open={board.isOpen}
+          symbol={references.symbol}
+          projectName={references.projectName}
+          cards={board.cards}
+          thumbnailFor={board.thumbnailFor}
+          requestThumbnail={board.requestThumbnail}
+          onSelect={board.selectCard}
+          onClose={board.close}
+        />
       </main>
       <SettingsDialog
         open={layout.isSettingsOpen}

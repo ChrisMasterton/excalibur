@@ -783,6 +783,8 @@
 --------------------------------------------------------------------------- */
 
 .workspace {
+  /* The board overlay covers the workspace and leaves the sidebar reachable. */
+  position: relative;
   padding: 16px 24px 20px;
   min-width: 0;
   min-height: 0;
@@ -1403,6 +1405,182 @@
   font-size: 13px;
   line-height: 1.45;
   color: var(--ink-soft);
+}
+
+
+/* Board ---------------------------------------------------------------------
+   Every document that mentions the active symbol, side by side. It sits over the
+   workspace only, so the sidebar stays where it was. */
+
+.board-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: rgba(13, 15, 18, 0.35);
+  display: flex;
+  padding: 16px;
+  animation: status-fade-in var(--motion-fast) var(--ease-out);
+}
+
+.board {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  box-shadow: 0 30px 60px rgba(13, 15, 18, 0.25);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.board-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 14px 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.board-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.board-titles h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.board-titles p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  padding: 16px 20px 20px;
+  align-content: start;
+}
+
+.board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
+}
+
+.board-card:hover {
+  border-color: rgba(13, 15, 18, 0.28);
+  box-shadow: 0 12px 24px rgba(13, 15, 18, 0.12);
+  transform: translateY(-1px);
+}
+
+.board-card.is-active {
+  border-color: var(--highlight-stroke);
+  box-shadow: 0 0 0 1px var(--highlight-stroke);
+}
+
+.board-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.board-card-icon {
+  flex: none;
+  color: var(--ink-soft);
+}
+
+.board-card-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-card-count {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.board-card-thumb {
+  display: block;
+  height: 150px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  overflow: hidden;
+}
+
+.board-card-svg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 6px;
+}
+
+/* The thumbnail keeps its own viewBox, so it scales to the card without distortion. */
+.board-card-svg svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.board-card-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--ink-faint);
+}
+
+.board-card-blank.is-loading {
+  animation: board-blank-pulse 1.1s var(--ease-standard) infinite alternate;
+}
+
+@keyframes board-blank-pulse {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 0.8;
+  }
 }
 
 /* Context menu -------------------------------------------------------------- */

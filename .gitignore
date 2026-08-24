@@ -47,3 +47,5 @@ src-tauri/gen/
 .agents/review-packets/index.md
 .agents/review-packets/*.md
 !.agents/review-packets/TEMPLATE.md
+# Claude Code agent worktrees/state
+.claude/

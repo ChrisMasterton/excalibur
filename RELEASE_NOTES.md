@@ -1,5 +1,14 @@
 # Release Notes
 
+## The symbol board - 2026-08-23
+- **Board** in the references panel header lays out every document that mentions the active symbol side by side, so a symbol's whole footprint can be read at a glance instead of one tab at a time.
+- Each card carries the document's own diagram with the matches marked: Mermaid thumbnails are re-rendered off-DOM and highlighted through the very same node lookup the live preview uses, and Excalidraw thumbnails - which cannot be highlighted during export - get amber boxes drawn over the matched elements, placed with `exportToSvg`'s own coordinate mapping (a scene coordinate shifted by `-min + exportPadding`).
+- Thumbnails are inlined as SVG rather than rasterised, so they stay crisp at any card size, and they carry their highlight as presentation attributes so nothing leaks into the page's styles.
+- Cards are ordered busiest first, then by title, and the document you are on is outlined. Clicking one closes the board and opens that document zoomed to its match, through the same path a panel row uses.
+- Thumbnails are made one at a time with a yield in between, from what an unsaved tab is holding rather than from disk, and are cached per document and symbol so reopening the board is instant. A file that will not load quietly shows its kind icon instead of an error.
+- Escape now peels the board first, then the highlight, then the panel. Closing the board puts back exactly what was underneath: the same tab, the same panel, the same marks.
+- The Mermaid preview's marks now survive any unrelated re-render: the rendered diagram is memoised on its markup, because React re-applies `dangerouslySetInnerHTML` on every render of its owner and was throwing the marks away with it.
+
 ## Sticky symbol highlight across tabs - 2026-08-23
 - The symbol you click stays **active** for as long as the references panel is open, and is marked in whatever document you move to next - a tab click, `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Cmd/Ctrl+1`…`9`, or a file in the sidebar. Walking a project's diagrams now shows you the same thing in each of them without touching the panel.
 - Documents that never mention the symbol just show nothing: no marks, no message.
