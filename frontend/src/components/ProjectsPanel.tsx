@@ -34,6 +34,8 @@ type ProjectsPanelProps = {
   onOpenFile: (file: ProjectFile) => void
   /** Opens every diagram in the folder as a tab. */
   onOpenAllFiles: (project: ProjectItem) => void
+  /** Opens the "Coding agent prompt" dialog for the folder. */
+  onAgentPrompt: (project: ProjectItem) => void
   onMoveFile: (file: ProjectFile, project: ProjectItem) => void
   onMoveFileToNewProject: (file: ProjectFile) => void
   onError: (message: string) => void
@@ -60,6 +62,7 @@ export function ProjectsPanel({
   onRenameProject,
   onOpenFile,
   onOpenAllFiles,
+  onAgentPrompt,
   onMoveFile,
   onMoveFileToNewProject,
   onError,
@@ -107,6 +110,7 @@ export function ProjectsPanel({
   const openProjectMenu = (event: MouseEvent, project: ProjectItem) => {
     menu.open(event, [
       { label: 'Open all diagrams', icon: 'folder-open', onSelect: () => onOpenAllFiles(project) },
+      { label: 'Coding agent prompt…', icon: 'terminal', onSelect: () => onAgentPrompt(project) },
       { label: 'Rename project', icon: 'pencil', onSelect: () => setRenaming(project.path) },
       { label: 'Rescan folder', icon: 'refresh', onSelect: () => void loadFiles(project.path) },
       { separator: true },
@@ -195,6 +199,13 @@ export function ProjectsPanel({
                   size="sm"
                   className="file-row-more"
                   onClick={() => onOpenAllFiles(project)}
+                />
+                <IconButton
+                  icon="terminal"
+                  label={`Coding agent prompt for ${project.name}`}
+                  size="sm"
+                  className="file-row-more"
+                  onClick={() => onAgentPrompt(project)}
                 />
                 <IconButton
                   icon="more"

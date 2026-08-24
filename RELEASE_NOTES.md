@@ -1,5 +1,12 @@
 # Release Notes
 
+## Coding agent prompt - 2026-08-23
+- Every project row can now compose the **prompt you paste into a coding agent** (Claude Code and friends) so the Mermaid it writes drops straight into that folder. Reach it from the project's right-click menu or the terminal icon that appears on the row.
+- Five presets - architectural overview, feature deep-dive, ER / data model, sequence for a named flow, and free text - with a live monospace preview that regenerates as you type. The deep-dive and sequence presets require their subject before Copy enables; the chosen preset is remembered.
+- The prompt carries the project context an agent cannot guess: the folder's absolute path, the diagrams already in it (relative path and frontmatter title), and the project's **symbol vocabulary** from the same index behind "Find in project" - the names actually used, grouped by kind, with the instruction to reuse them rather than invent synonyms. Opening the dialog starts the index; the prompt fills in when it finishes.
+- It closes with an output contract that makes the results drop in cleanly: one `.mmd` file per diagram written directly into the folder, raw Mermaid with no Markdown fences or prose, YAML frontmatter `title:` on every file, kebab-case names, short labels instead of `<br/>`, identifiers consistent with the vocabulary, and no overwriting of existing diagrams.
+- **Copy prompt** copies through the webview clipboard (`Cmd/Ctrl+Enter` does the same) and says so; the prompt itself is deterministic, so the preview is exactly what you paste.
+
 ## Sticky symbol highlight across tabs - 2026-08-23
 - The symbol you click stays **active** for as long as the references panel is open, and is marked in whatever document you move to next - a tab click, `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Cmd/Ctrl+1`…`9`, or a file in the sidebar. Walking a project's diagrams now shows you the same thing in each of them without touching the panel.
 - Documents that never mention the symbol just show nothing: no marks, no message.
