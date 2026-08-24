@@ -298,7 +298,10 @@ export const ZoomPanViewport = forwardRef<ZoomPanHandle, ZoomPanViewportProps>(f
       // Trackpad pinch arrives as ctrl+wheel, so a modifier always flips the plain-wheel action.
       const shouldZoom = wheelAction === 'zoom' ? !modifier : modifier
       if (shouldZoom) {
-        const factor = Math.exp(-event.deltaY * 0.01 * zoomSpeed)
+        // A mouse-wheel notch reports ~±120 deltaY while a trackpad pinch sends small
+        // fractional deltas; clamp so one notch zooms ~10%, not ~3x.
+        const delta = Math.max(-20, Math.min(20, event.deltaY))
+        const factor = Math.exp(-delta * 0.005 * zoomSpeed)
         zoomAround(factor, event.clientX, event.clientY)
         return
       }
