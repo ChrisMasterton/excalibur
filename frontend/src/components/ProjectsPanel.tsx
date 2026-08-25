@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import { api, errorMessage } from '../lib/tauri'
 import type { ProjectFile, ProjectItem } from '../types'
 import { useContextMenu } from '../hooks/useContextMenu'
@@ -9,6 +9,7 @@ import { Icon } from './Icon'
 import { IconButton } from './IconButton'
 import { SymbolSearch } from './SymbolSearch'
 import { buildMoveToProjectItems, kindIcon } from '../lib/menus'
+import { isPathInDirectory } from '../lib/paths'
 
 const EXPANDED_STORAGE_KEY = 'excalibur.projects.expanded'
 
@@ -16,6 +17,42 @@ type ProjectFilesState = {
   files: ProjectFile[]
   loading: boolean
   error: string | null
+}
+
+type ProjectTreeNode = {
+  path: string
+  name: string
+  folders: ProjectTreeNode[]
+  files: ProjectFile[]
+}
+
+function buildProjectTree(files: ProjectFile[]): ProjectTreeNode {
+  type MutableNode = Omit<ProjectTreeNode, 'folders'> & { foldersByName: Map<string, MutableNode> }
+  const root: MutableNode = { path: '', name: '', foldersByName: new Map(), files: [] }
+  for (const file of files) {
+    const parts = file.relative_path.split(/[\\/]/).filter(Boolean)
+    let node = root
+    for (const folderName of parts.slice(0, -1)) {
+      const path = node.path ? `${node.path}/${folderName}` : folderName
+      let child = node.foldersByName.get(folderName)
+      if (!child) {
+        child = { path, name: folderName, foldersByName: new Map(), files: [] }
+        node.foldersByName.set(folderName, child)
+      }
+      node = child
+    }
+    node.files.push(file)
+  }
+
+  const freeze = (node: MutableNode): ProjectTreeNode => ({
+    path: node.path,
+    name: node.name,
+    folders: [...node.foldersByName.values()]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map(freeze),
+    files: [...node.files].sort((left, right) => left.name.localeCompare(right.name)),
+  })
+  return freeze(root)
 }
 
 type ProjectsPanelProps = {
@@ -35,6 +72,8 @@ type ProjectsPanelProps = {
   onOpenFile: (file: ProjectFile) => void
   /** Opens every diagram in the folder as a tab. */
   onOpenAllFiles: (project: ProjectItem) => void
+  /** Closes only the tabs whose files live inside this project folder. */
+  onCloseAllTabs: (project: ProjectItem) => void
   /** Opens the "Coding agent prompt" dialog for the folder. */
   onAgentPrompt: (project: ProjectItem) => void
   onMoveFile: (file: ProjectFile, project: ProjectItem) => void
@@ -64,6 +103,7 @@ export function ProjectsPanel({
   onRenameFileDisplayName,
   onOpenFile,
   onOpenAllFiles,
+  onCloseAllTabs,
   onAgentPrompt,
   onMoveFile,
   onMoveFileToNewProject,
@@ -111,8 +151,15 @@ export function ProjectsPanel({
   }
 
   const openProjectMenu = (event: MouseEvent, project: ProjectItem) => {
+    const hasOpenTabs = [...openPaths].some((path) => isPathInDirectory(path, project.path))
     menu.open(event, [
       { label: 'Open all diagrams', icon: 'folder-open', onSelect: () => onOpenAllFiles(project) },
+      {
+        label: 'Close all tabs',
+        icon: 'x',
+        disabled: !hasOpenTabs,
+        onSelect: () => onCloseAllTabs(project),
+      },
       { label: 'Coding agent prompt…', icon: 'terminal', onSelect: () => onAgentPrompt(project) },
       { label: 'Rename project display name', icon: 'pencil', onSelect: () => setRenaming(project.path) },
       { label: 'Rescan folder', icon: 'refresh', onSelect: () => void loadFiles(project.path) },
@@ -146,6 +193,85 @@ export function ProjectsPanel({
       },
     ])
   }
+
+  const renderProjectFile = (file: ProjectFile, project: ProjectItem): ReactNode => {
+    const open = openPaths.has(file.path)
+    const active = activePath === file.path
+    const displayName = file.display_name || file.title || file.name
+    const isRenaming = renamingFile === file.path
+    return (
+      <div
+        key={file.path}
+        className={`file-row${open ? ' is-open' : ''}${active ? ' is-active' : ''}`}
+        onContextMenu={(event) => openFileMenu(event, file, project)}
+      >
+        {isRenaming ? (
+          <div className="file-row-main" title={file.path}>
+            <Icon name={kindIcon(file.kind)} size={16} className="file-row-icon" />
+            <span className="file-row-text">
+              <EditableTitle
+                value={displayName}
+                label={`Diagram display name for ${displayName}`}
+                className="file-display-name"
+                autoEdit
+                onEditingChange={(editing) => {
+                  if (!editing && renamingFile === file.path) {
+                    setRenamingFile(null)
+                  }
+                }}
+                onCommit={async (name) => {
+                  try {
+                    await onRenameFileDisplayName(project, file, name)
+                  } catch (error) {
+                    onError(errorMessage(error, 'Unable to rename diagram display name.'))
+                    throw error
+                  }
+                }}
+              />
+              <span className="file-row-path">{file.relative_path}</span>
+            </span>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="file-row-main"
+            onClick={() => onOpenFile(file)}
+            title={file.path}
+          >
+            <Icon name={kindIcon(file.kind)} size={16} className="file-row-icon" />
+            <span className="file-row-text">
+              <span className="file-row-name">{displayName}</span>
+              {file.display_name || file.title || file.relative_path !== file.name ? (
+                <span className="file-row-path">{file.relative_path}</span>
+              ) : null}
+            </span>
+          </button>
+        )}
+        <IconButton
+          icon="more"
+          label={`More actions for ${file.name}`}
+          size="sm"
+          className="file-row-more"
+          onClick={(event) => openFileMenu(event, file, project)}
+        />
+      </div>
+    )
+  }
+
+  const renderProjectTree = (node: ProjectTreeNode, project: ProjectItem): ReactNode => (
+    <>
+      {node.folders.map((folder) => (
+        <div key={folder.path} className="project-folder-node" data-folder-path={folder.path}>
+          <div className="project-subfolder">
+            <Icon name="folder" size={15} className="project-subfolder-icon" />
+            <span>{folder.name}</span>
+          </div>
+          <div className="project-folder-children">{renderProjectTree(folder, project)}</div>
+        </div>
+      ))}
+      {node.files.map((file) => renderProjectFile(file, project))}
+    </>
+  )
 
   return (
     <div className="projects-panel">
@@ -232,69 +358,9 @@ export function ProjectsPanel({
                   {state && !state.loading && !state.error && !state.files.length ? (
                     <div className="empty">No diagrams in this folder yet. Save one here and it will appear.</div>
                   ) : null}
-                  {state?.files.map((file) => {
-                    const open = openPaths.has(file.path)
-                    const active = activePath === file.path
-                    const displayName = file.display_name || file.title || file.name
-                    const isRenaming = renamingFile === file.path
-                    return (
-                      <div
-                        key={file.path}
-                        className={`file-row is-nested${open ? ' is-open' : ''}${active ? ' is-active' : ''}`}
-                        onContextMenu={(event) => openFileMenu(event, file, project)}
-                      >
-                        {isRenaming ? (
-                          <div className="file-row-main" title={file.path}>
-                            <Icon name={kindIcon(file.kind)} size={16} className="file-row-icon" />
-                            <span className="file-row-text">
-                              <EditableTitle
-                                value={displayName}
-                                label={`Diagram display name for ${displayName}`}
-                                className="file-display-name"
-                                autoEdit
-                                onEditingChange={(editing) => {
-                                  if (!editing && renamingFile === file.path) {
-                                    setRenamingFile(null)
-                                  }
-                                }}
-                                onCommit={async (name) => {
-                                  try {
-                                    await onRenameFileDisplayName(project, file, name)
-                                  } catch (error) {
-                                    onError(errorMessage(error, 'Unable to rename diagram display name.'))
-                                    throw error
-                                  }
-                                }}
-                              />
-                              <span className="file-row-path">{file.relative_path}</span>
-                            </span>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="file-row-main"
-                            onClick={() => onOpenFile(file)}
-                            title={file.path}
-                          >
-                            <Icon name={kindIcon(file.kind)} size={16} className="file-row-icon" />
-                            <span className="file-row-text">
-                              <span className="file-row-name">{displayName}</span>
-                              {file.display_name || file.title || file.relative_path !== file.name ? (
-                                <span className="file-row-path">{file.relative_path}</span>
-                              ) : null}
-                            </span>
-                          </button>
-                        )}
-                        <IconButton
-                          icon="more"
-                          label={`More actions for ${file.name}`}
-                          size="sm"
-                          className="file-row-more"
-                          onClick={(event) => openFileMenu(event, file, project)}
-                        />
-                      </div>
-                    )
-                  })}
+                  {state?.files.length ? (
+                    <div className="project-tree">{renderProjectTree(buildProjectTree(state.files), project)}</div>
+                  ) : null}
                 </div>
               ) : null}
             </div>

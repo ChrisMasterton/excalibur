@@ -246,6 +246,7 @@ function App() {
             }
             onOpenFile={(file: ProjectFile) => tabs.openDiagram(file.kind, file.path)}
             onOpenAllFiles={(project) => void projectActions.handleOpenAllProjectFiles(project)}
+            onCloseAllTabs={projectActions.handleCloseAllProjectTabs}
             onAgentPrompt={agentPrompt.open}
             onMoveFile={(file, project) => void projectActions.moveFileToProject(file.path, project)}
             onMoveFileToNewProject={(file) => void projectActions.moveFileToNewProject(file.path)}

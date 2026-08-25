@@ -6,6 +6,8 @@
 - Project and individual diagram display names live in an extensible `excalibur.json` inside the project folder. Diagram entries carry project-relative paths, and unrelated metadata fields are preserved.
 - Diagram display names can be edited from each file row's context menu. Mermaid frontmatter titles and file names remain the fallback when no metadata label exists.
 - When a diagram file is renamed or moved through Excalibur, its metadata path moves with it.
+- Diagram files now appear beneath their real project-relative subfolders instead of in one flat list.
+- Each project's `…` menu has **Close all tabs**, scoped to that project and all of its subfolders; tabs from other projects remain open.
 
 ## The symbol board - 2026-08-23
 - **Board** in the references panel header lays out every document that mentions the active symbol side by side, so a symbol's whole footprint can be read at a glance instead of one tab at a time.

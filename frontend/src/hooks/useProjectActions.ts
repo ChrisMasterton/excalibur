@@ -4,7 +4,7 @@ import type { DocumentTabsApi } from './useDocumentTabs'
 import type { ExcalidrawDocumentApi } from './useExcalidrawDocument'
 import type { MermaidDocumentApi } from './useMermaidDocument'
 import type { DocumentPatch } from './useOpenDocuments'
-import { baseName, fileStem } from '../lib/paths'
+import { baseName, fileStem, isPathInDirectory } from '../lib/paths'
 import { api, errorMessage } from '../lib/tauri'
 import type { DiagramKind, OpenDocument, OpenFileResponse, ProjectItem } from '../types'
 
@@ -36,7 +36,7 @@ export function useProjectActions({
   patchDocument,
   findByPath,
 }: UseProjectActionsOptions) {
-  const { activateDocument, openLoadedFile } = tabs
+  const { activateDocument, closeDocumentIds, openLoadedFile } = tabs
   const { relocateDocument: relocateExcalidrawDocument } = excalidraw
   const { relocateDocument: relocateMermaidDocument } = mermaid
 
@@ -137,6 +137,17 @@ export function useProjectActions({
     [findByPath, patchDocument, refreshProjectFiles, refreshRecents],
   )
 
+  const handleCloseAllProjectTabs = useCallback(
+    (project: ProjectItem) => {
+      closeDocumentIds(
+        getDocuments()
+          .filter((document) => document.path && isPathInDirectory(document.path, project.path))
+          .map((document) => document.id),
+      )
+    },
+    [closeDocumentIds, getDocuments],
+  )
+
   const moveFileToProject = useCallback(
     async (path: string, project: ProjectItem) => {
       try {
@@ -167,6 +178,7 @@ export function useProjectActions({
     handleAddProject,
     handleRenameProject,
     handleRenameProjectFileDisplayName,
+    handleCloseAllProjectTabs,
     moveFileToProject,
     moveFileToNewProject,
   }

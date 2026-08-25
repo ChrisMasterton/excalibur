@@ -21,6 +21,13 @@ export function extension(path: string) {
   return index > 0 ? name.slice(index + 1).toLowerCase() : ''
 }
 
+/** True when a path is the directory itself or one of its descendants. */
+export function isPathInDirectory(path: string, directory: string) {
+  const normalizedPath = path.replaceAll('\\', '/')
+  const normalizedDirectory = directory.replaceAll('\\', '/').replace(/\/+$/, '')
+  return normalizedPath === normalizedDirectory || normalizedPath.startsWith(`${normalizedDirectory}/`)
+}
+
 /** Last two folders of a path's directory, e.g. `…/Diagrams/orders`, for compact lists. */
 export function shortDirName(path: string) {
   const segments = dirName(path).split(SEPARATOR).filter(Boolean)
