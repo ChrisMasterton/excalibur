@@ -21,6 +21,8 @@ type MermaidWorkspaceProps = {
   mode: DocumentMode
   /** Already resolved: view mode forces the code pane shut without losing the preference. */
   editorCollapsed: boolean
+  /** Normalized Mermaid diagram type, tracked live from the source. */
+  diagramType: string | null
   text: string
   /** The rendered preview SVG, pinned to its natural size by `useMermaidDocument`. */
   diagram: PinnedDiagram
@@ -72,6 +74,7 @@ export function MermaidWorkspace({
   isConverting,
   mode,
   editorCollapsed,
+  diagramType,
   text,
   diagram,
   error,
@@ -97,6 +100,7 @@ export function MermaidWorkspace({
     <section className="workspace-panel" hidden={hidden} aria-label="Mermaid editor">
       <DocumentToolbar
         kind="mermaid"
+        diagramType={diagramType}
         title={title}
         path={path}
         dirty={dirty}

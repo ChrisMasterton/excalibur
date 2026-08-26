@@ -8,7 +8,7 @@ import { EditableTitle } from './EditableTitle'
 import { Icon } from './Icon'
 import { IconButton } from './IconButton'
 import { SymbolSearch } from './SymbolSearch'
-import { buildMoveToProjectItems, kindIcon } from '../lib/menus'
+import { buildMoveToProjectItems, diagramIcon } from '../lib/menus'
 import { isPathInDirectory } from '../lib/paths'
 
 const EXPANDED_STORAGE_KEY = 'excalibur.projects.expanded'
@@ -175,7 +175,7 @@ export function ProjectsPanel({
 
   const openFileMenu = (event: MouseEvent, file: ProjectFile, project: ProjectItem) => {
     menu.open(event, [
-      { label: 'Open', icon: kindIcon(file.kind), onSelect: () => onOpenFile(file) },
+      { label: 'Open', icon: diagramIcon(file.kind, file.diagram_type), onSelect: () => onOpenFile(file) },
       {
         label: 'Rename diagram display name',
         icon: 'pencil',
@@ -207,7 +207,7 @@ export function ProjectsPanel({
       >
         {isRenaming ? (
           <div className="file-row-main" title={file.path}>
-            <Icon name={kindIcon(file.kind)} size={16} className="file-row-icon" />
+            <Icon name={diagramIcon(file.kind, file.diagram_type)} size={16} className="file-row-icon" />
             <span className="file-row-text">
               <EditableTitle
                 value={displayName}
@@ -238,7 +238,7 @@ export function ProjectsPanel({
             onClick={() => onOpenFile(file)}
             title={file.path}
           >
-            <Icon name={kindIcon(file.kind)} size={16} className="file-row-icon" />
+            <Icon name={diagramIcon(file.kind, file.diagram_type)} size={16} className="file-row-icon" />
             <span className="file-row-text">
               <span className="file-row-name">{displayName}</span>
               {file.display_name || file.title || file.relative_path !== file.name ? (

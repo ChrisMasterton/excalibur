@@ -1,8 +1,27 @@
 import type { MenuItem } from '../components/ContextMenu'
+import type { IconName } from '../components/Icon'
 import type { DiagramKind, ProjectItem } from '../types'
 
-export function kindIcon(kind: DiagramKind) {
-  return kind === 'excalidraw' ? 'pen' : 'branch'
+const MERMAID_TYPE_ICONS: Partial<Record<string, IconName>> = {
+  flowchart: 'flowchart',
+  sequence: 'sequence',
+  class: 'uml-class',
+  er: 'database',
+  state: 'state',
+  gantt: 'gantt',
+  pie: 'pie',
+  mindmap: 'mindmap',
+  journey: 'timeline',
+  timeline: 'timeline',
+  git: 'branch',
+}
+
+/** Icon for a diagram file; Mermaid files get a type-specific glyph when known. */
+export function diagramIcon(kind: DiagramKind, diagramType?: string | null): IconName {
+  if (kind === 'excalidraw') {
+    return 'pen'
+  }
+  return (diagramType && MERMAID_TYPE_ICONS[diagramType]) || 'branch'
 }
 
 /** Builds the "Move to project" submenu shared by recents and project files. */

@@ -1,4 +1,4 @@
-import { kindIcon } from '../lib/menus'
+import { diagramIcon } from '../lib/menus'
 import type { SymbolDocumentHit } from '../lib/symbolIndex'
 import { Icon } from './Icon'
 
@@ -21,7 +21,7 @@ export function SymbolHitList({ hits, activePath, onSelect }: SymbolHitListProps
           title={hit.doc.path}
           onClick={() => onSelect(hit)}
         >
-          <Icon name={kindIcon(hit.doc.kind)} size={15} className="symbol-hit-icon" />
+          <Icon name={diagramIcon(hit.doc.kind, hit.doc.diagramType)} size={15} className="symbol-hit-icon" />
           <span className="symbol-hit-name">{hit.doc.title}</span>
           <span className="symbol-hit-count">{hit.count}</span>
         </button>

@@ -25,6 +25,9 @@ struct RecentItem {
     /// Display title read from the file (Mermaid frontmatter); never persisted.
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     title: Option<String>,
+    /// Normalized Mermaid diagram type; never persisted.
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    diagram_type: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -45,6 +48,8 @@ struct ProjectFile {
     display_name: Option<String>,
     /// Format-owned title, currently Mermaid YAML frontmatter.
     title: Option<String>,
+    /// Normalized Mermaid diagram type ("flowchart", "er", "sequence", ...).
+    diagram_type: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -126,6 +131,7 @@ fn update_recents(app: &AppHandle, kind: &str, path: &str, name: Option<String>)
             name,
             updated_at: now_epoch(),
             title: None,
+            diagram_type: None,
         },
     );
     let limit = recents_limit(app);
@@ -464,17 +470,51 @@ fn mermaid_frontmatter_title(source: &str) -> Option<String> {
     None
 }
 
-/// Reads the display title of a diagram file, if its format carries one.
-fn diagram_title(kind: &str, path: &Path) -> Option<String> {
-    if kind != "mermaid" {
-        return None;
+/// Identifies the Mermaid diagram type from the first meaningful line after
+/// frontmatter, blank lines, and `%%` comments/directives.
+fn mermaid_diagram_type(source: &str) -> Option<&'static str> {
+    let mut lines = source.trim_start_matches('\u{feff}').lines().peekable();
+    if lines.peek().map(|line| line.trim()) == Some("---") {
+        lines.next();
+        while lines.next()?.trim() != "---" {}
     }
-    // Only the head of the file matters; avoid reading large files fully.
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("%%") {
+            continue;
+        }
+        let keyword: String = trimmed
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        return Some(match keyword.as_str() {
+            "flowchart" | "graph" => "flowchart",
+            "sequenceDiagram" => "sequence",
+            "classDiagram" | "classDiagram-v2" => "class",
+            "erDiagram" => "er",
+            "stateDiagram" | "stateDiagram-v2" => "state",
+            "gantt" => "gantt",
+            "pie" => "pie",
+            "mindmap" => "mindmap",
+            "journey" => "journey",
+            "timeline" => "timeline",
+            "gitGraph" => "git",
+            "quadrantChart" => "quadrant",
+            "requirementDiagram" => "requirement",
+            "C4Context" | "C4Container" | "C4Component" | "C4Dynamic" | "C4Deployment" => "c4",
+            _ => return None,
+        });
+    }
+    None
+}
+
+/// Reads the head of a diagram file, enough for its format-owned metadata.
+/// Only the head matters; avoids reading large files fully.
+fn read_diagram_head(path: &Path) -> Option<String> {
     let mut buffer = vec![0u8; 4096];
     let mut file = fs::File::open(path).ok()?;
     let read = std::io::Read::read(&mut file, &mut buffer).ok()?;
-    let head = String::from_utf8_lossy(&buffer[..read]);
-    mermaid_frontmatter_title(&head)
+    Some(String::from_utf8_lossy(&buffer[..read]).into_owned())
 }
 
 /// Maps a file extension to the workspace that can open it.
@@ -528,10 +568,17 @@ fn collect_project_files(
             .strip_prefix(root)
             .map(|rest| rest.to_string_lossy().to_string())
             .unwrap_or_else(|_| name.clone());
+        let head = (kind == "mermaid")
+            .then(|| read_diagram_head(&path))
+            .flatten();
         out.push(ProjectFile {
             kind: kind.to_string(),
             display_name: display_names.get(&relative_path.replace('\\', "/")).cloned(),
-            title: diagram_title(kind, &path),
+            title: head.as_deref().and_then(mermaid_frontmatter_title),
+            diagram_type: head
+                .as_deref()
+                .and_then(mermaid_diagram_type)
+                .map(str::to_string),
             path: path.to_string_lossy().to_string(),
             name,
             relative_path,
@@ -666,7 +713,15 @@ fn recents_with_titles(app: &AppHandle) -> Vec<RecentItem> {
     let mut recents = load_recents(app);
     for item in recents.iter_mut() {
         let path = Path::new(&item.path);
-        item.title = diagram_display_name_for_path(app, path).or_else(|| diagram_title(&item.kind, path));
+        let head = (item.kind == "mermaid")
+            .then(|| read_diagram_head(path))
+            .flatten();
+        item.title = diagram_display_name_for_path(app, path)
+            .or_else(|| head.as_deref().and_then(mermaid_frontmatter_title));
+        item.diagram_type = head
+            .as_deref()
+            .and_then(mermaid_diagram_type)
+            .map(str::to_string);
     }
     recents
 }
@@ -1229,8 +1284,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        mermaid_frontmatter_title, project_diagram_display_names, project_display_name,
-        write_diagram_display_name, write_project_display_name, PROJECT_METADATA_FILE,
+        mermaid_diagram_type, mermaid_frontmatter_title, project_diagram_display_names,
+        project_display_name, write_diagram_display_name, write_project_display_name,
+        PROJECT_METADATA_FILE,
     };
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1252,6 +1308,24 @@ mod tests {
         assert_eq!(mermaid_frontmatter_title("flowchart TD\n  title: nope"), None);
         assert_eq!(mermaid_frontmatter_title("---\n---\ntitle: later"), None);
         assert_eq!(mermaid_frontmatter_title("---\ntitle:   \n---\n"), None);
+    }
+
+    #[test]
+    fn detects_diagram_type_from_first_keyword() {
+        assert_eq!(mermaid_diagram_type("flowchart TD\n  A --> B"), Some("flowchart"));
+        assert_eq!(mermaid_diagram_type("graph LR\n  A --> B"), Some("flowchart"));
+        assert_eq!(mermaid_diagram_type("erDiagram\n  USER ||--o{ ORDER : places"), Some("er"));
+        assert_eq!(mermaid_diagram_type("stateDiagram-v2\n  [*] --> Idle"), Some("state"));
+        assert_eq!(mermaid_diagram_type("pie showData\n  \"A\": 1"), Some("pie"));
+        assert_eq!(mermaid_diagram_type("C4Context\n  title System"), Some("c4"));
+    }
+
+    #[test]
+    fn diagram_type_skips_frontmatter_and_comments() {
+        let source = "\u{feff}---\ntitle: Auth\n---\n\n%%{init: {\"theme\": \"dark\"}}%%\nsequenceDiagram\n  A->>B: hi";
+        assert_eq!(mermaid_diagram_type(source), Some("sequence"));
+        assert_eq!(mermaid_diagram_type("---\ntitle: cut off"), None);
+        assert_eq!(mermaid_diagram_type("someUnknownThing\n  A --> B"), None);
     }
 
     #[test]

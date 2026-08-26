@@ -16,6 +16,8 @@ export type RecentItem = {
   updated_at: number
   /** Display title read from the file (Mermaid frontmatter `title:`). */
   title?: string | null
+  /** Normalized Mermaid diagram type ("flowchart", "er", "sequence", ...). */
+  diagram_type?: string | null
 }
 
 /** One open tab. Editor state lives in the caches held by `useOpenDocuments`. */
@@ -28,6 +30,8 @@ export type OpenDocument = {
   name: string
   /** Display title carried inside the file (Mermaid frontmatter `title:`). */
   title?: string | null
+  /** Normalized Mermaid diagram type, tracked live as the source changes. */
+  diagramType?: string | null
   dirty: boolean
   /** `view` hides the editing chrome and turns clicks into symbol lookups. */
   mode: DocumentMode
@@ -48,6 +52,8 @@ export type ProjectFile = {
   /** User-authored label from the project's excalibur.json. */
   display_name?: string | null
   title?: string | null
+  /** Normalized Mermaid diagram type ("flowchart", "er", "sequence", ...). */
+  diagram_type?: string | null
 }
 
 export type OpenFileResponse = {

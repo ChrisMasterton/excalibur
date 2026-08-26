@@ -3,10 +3,12 @@ import { dirName } from '../lib/paths'
 import type { DiagramKind } from '../types'
 import { EditableTitle } from './EditableTitle'
 import { Icon } from './Icon'
-import { kindIcon } from '../lib/menus'
+import { diagramIcon } from '../lib/menus'
 
 type DocumentToolbarProps = {
   kind: DiagramKind
+  /** Normalized Mermaid diagram type, for the type-specific icon. */
+  diagramType?: string | null
   /** File stem when a file is loaded, otherwise the name the next save will suggest. */
   title: string
   path: string | null
@@ -27,6 +29,7 @@ type DocumentToolbarProps = {
  */
 export function DocumentToolbar({
   kind,
+  diagramType,
   title,
   path,
   dirty,
@@ -41,7 +44,7 @@ export function DocumentToolbar({
   return (
     <header className="toolbar">
       <div className="toolbar-document">
-        <Icon name={kindIcon(kind)} size={18} className="toolbar-kind" />
+        <Icon name={diagramIcon(kind, diagramType)} size={18} className="toolbar-kind" />
         <div className="toolbar-titles">
           <div className="toolbar-title-row">
             <EditableTitle

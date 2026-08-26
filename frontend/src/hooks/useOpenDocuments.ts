@@ -34,6 +34,7 @@ export type NewDocumentInput = {
   path?: string | null
   name?: string
   title?: string | null
+  diagramType?: string | null
   dirty?: boolean
   /** Defaults to `edit`; files read from disk ask for `view`. */
   mode?: DocumentMode
@@ -41,7 +42,9 @@ export type NewDocumentInput = {
   mermaid?: MermaidDocumentCache
 }
 
-export type DocumentPatch = Partial<Pick<OpenDocument, 'path' | 'name' | 'title' | 'dirty' | 'mode'>>
+export type DocumentPatch = Partial<
+  Pick<OpenDocument, 'path' | 'name' | 'title' | 'diagramType' | 'dirty' | 'mode'>
+>
 
 export type StoredOpenDocument = { kind: DiagramKind; path: string }
 export type StoredOpenDocuments = { documents: StoredOpenDocument[]; activeIndex: number }
@@ -136,6 +139,7 @@ export function useOpenDocuments() {
       path: input.path ?? null,
       name: input.name ?? '',
       title: input.title ?? null,
+      diagramType: input.diagramType ?? null,
       dirty: input.dirty ?? false,
       mode: input.mode ?? 'edit',
     }

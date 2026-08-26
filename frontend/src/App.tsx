@@ -304,6 +304,7 @@ function App() {
             isConverting={mermaid.isConverting}
             mode={tabs.activeMode}
             editorCollapsed={tabs.activeMode === 'view' || layout.isMermaidEditorCollapsed}
+            diagramType={mermaid.diagramType}
             text={mermaid.text}
             diagram={mermaid.diagram}
             error={mermaid.error}

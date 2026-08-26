@@ -35,6 +35,8 @@ export type SymbolDocument = {
   kind: DiagramKind
   /** Frontmatter title, else the file stem. */
   title: string
+  /** Normalized Mermaid diagram type ("flowchart", "er", "sequence", ...). */
+  diagramType?: string | null
 }
 
 export type SymbolEntry = {

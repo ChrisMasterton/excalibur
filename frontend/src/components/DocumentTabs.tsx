@@ -1,7 +1,7 @@
 import { useEffect, useRef, type MouseEvent } from 'react'
 import { useContextMenu } from '../hooks/useContextMenu'
 import { documentDisplayName } from '../hooks/useOpenDocuments'
-import { kindIcon } from '../lib/menus'
+import { diagramIcon } from '../lib/menus'
 import type { OpenDocument } from '../types'
 import { Icon } from './Icon'
 import { IconButton } from './IconButton'
@@ -86,7 +86,7 @@ export function DocumentTabs({
               title={doc.path ?? 'Not saved yet'}
               onClick={() => onActivate(doc.id)}
             >
-              <Icon name={kindIcon(doc.kind)} size={14} className="document-tab-icon" />
+              <Icon name={diagramIcon(doc.kind, doc.diagramType)} size={14} className="document-tab-icon" />
               <span className="document-tab-name">{name}</span>
               {doc.dirty ? <span className="dirty-dot" title="Unsaved changes" /> : null}
             </button>

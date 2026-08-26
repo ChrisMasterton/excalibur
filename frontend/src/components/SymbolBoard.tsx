@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef } from 'react'
-import { kindIcon } from '../lib/menus'
+import { diagramIcon } from '../lib/menus'
 import type { SymbolDocumentHit } from '../lib/symbolIndex'
 import { symbolKindHint } from '../lib/symbols'
 import type { PickedSymbol } from '../lib/symbolPick'
@@ -46,7 +46,7 @@ function BoardCardView({ card, thumbnail, onRequest, onSelect }: BoardCardViewPr
       onClick={() => onSelect(hit)}
     >
       <span className="board-card-head">
-        <Icon name={kindIcon(hit.doc.kind)} size={15} className="board-card-icon" />
+        <Icon name={diagramIcon(hit.doc.kind, hit.doc.diagramType)} size={15} className="board-card-icon" />
         <span className="board-card-name">{hit.doc.title}</span>
         <span className="board-card-count">{hit.count}</span>
       </span>
@@ -59,7 +59,7 @@ function BoardCardView({ card, thumbnail, onRequest, onSelect }: BoardCardViewPr
           />
         ) : (
           <span className={`board-card-blank${thumbnail?.status === 'loading' ? ' is-loading' : ''}`}>
-            <Icon name={kindIcon(hit.doc.kind)} size={24} />
+            <Icon name={diagramIcon(hit.doc.kind, hit.doc.diagramType)} size={24} />
           </span>
         )}
       </span>

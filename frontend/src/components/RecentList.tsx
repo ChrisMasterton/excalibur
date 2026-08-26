@@ -1,6 +1,6 @@
 import type { MouseEvent } from 'react'
 import { useContextMenu } from '../hooks/useContextMenu'
-import { buildMoveToProjectItems, kindIcon } from '../lib/menus'
+import { buildMoveToProjectItems, diagramIcon } from '../lib/menus'
 import { baseName, dirName, shortDirName } from '../lib/paths'
 import type { ProjectItem, RecentItem } from '../types'
 import { Icon } from './Icon'
@@ -32,7 +32,7 @@ export function RecentList({
 
   const openMenu = (event: MouseEvent, item: RecentItem) => {
     menu.open(event, [
-      { label: 'Open', icon: kindIcon(item.kind), onSelect: () => onOpen(item) },
+      { label: 'Open', icon: diagramIcon(item.kind, item.diagram_type), onSelect: () => onOpen(item) },
       {
         label: 'Move to project',
         icon: 'folder-input',
@@ -69,7 +69,7 @@ export function RecentList({
               onClick={() => onOpen(item)}
               title={item.path}
             >
-              <Icon name={kindIcon(item.kind)} size={16} className="file-row-icon" />
+              <Icon name={diagramIcon(item.kind, item.diagram_type)} size={16} className="file-row-icon" />
               <span className="file-row-text">
                 <span className="file-row-name">{item.title || item.name || item.path}</span>
                 <span className="file-row-path">

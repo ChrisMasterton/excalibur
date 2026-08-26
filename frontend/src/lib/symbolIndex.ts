@@ -6,6 +6,7 @@
 
 import { extractMermaidSymbols } from './mermaidSymbols'
 import { fileStem } from './paths'
+import { parseMermaidDiagramType } from './mermaidDiagramType'
 import { parseMermaidTitle } from './mermaidTitle'
 import {
   normalizeSymbol,
@@ -79,7 +80,12 @@ function documentFor(file: ProjectFile, contents: string): SymbolDocument {
     file.title?.trim() ||
     (file.kind === 'mermaid' ? parseMermaidTitle(contents)?.trim() : '') ||
     fileStem(file.path)
-  return { path: file.path, kind: file.kind, title: title || fileStem(file.path) }
+  return {
+    path: file.path,
+    kind: file.kind,
+    title: title || fileStem(file.path),
+    diagramType: file.diagram_type ?? (file.kind === 'mermaid' ? parseMermaidDiagramType(contents) : null),
+  }
 }
 
 function pushEntry(

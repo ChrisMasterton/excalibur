@@ -1,5 +1,6 @@
 import type { NewDocumentInput } from '../hooks/useOpenDocuments'
 import type { DiagramKind, ExcalidrawData, ExcalidrawSceneSnapshot, OpenFileResponse } from '../types'
+import { parseMermaidDiagramType } from './mermaidDiagramType'
 import { parseMermaidTitle } from './mermaidTitle'
 import { extension, fileStem } from './paths'
 
@@ -71,6 +72,7 @@ export function documentInputForFile(kind: DiagramKind, file: OpenFileResponse):
     path: file.path,
     name: fileStem(file.path),
     title: file.display_name || parseMermaidTitle(file.contents),
+    diagramType: parseMermaidDiagramType(file.contents),
     mode: 'view',
     mermaid: {
       history: { text: file.contents, past: [], future: [] },

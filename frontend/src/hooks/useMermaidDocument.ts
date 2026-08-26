@@ -12,6 +12,7 @@ import {
   pinSvgToNaturalSize,
   renderDiagramToPngBytes,
 } from '../lib/mermaidSvg'
+import { parseMermaidDiagramType } from '../lib/mermaidDiagramType'
 import { parseMermaidTitle, titleToFileStem } from '../lib/mermaidTitle'
 import { baseName, dirName, fileStem } from '../lib/paths'
 import { api, errorMessage } from '../lib/tauri'
@@ -77,6 +78,7 @@ export function useMermaidDocument({
   })
   const text = history.text
   const title = useMemo(() => parseMermaidTitle(text), [text])
+  const diagramType = useMemo(() => parseMermaidDiagramType(text), [text])
   const [svg, setSvg] = useState('')
   const [error, setError] = useState('')
   const [isConverting, setIsConverting] = useState(false)
@@ -135,10 +137,11 @@ export function useMermaidDocument({
     [markDirty],
   )
 
-  // Keep the Mermaid tab labelled with the title from its frontmatter.
+  // Keep the Mermaid tab labelled with the title from its frontmatter and
+  // its icon matched to the diagram type in the source.
   useEffect(() => {
-    patchDocument(liveIdRef.current, { title })
-  }, [patchDocument, title])
+    patchDocument(liveIdRef.current, { title, diagramType })
+  }, [diagramType, patchDocument, title])
 
   useEffect(() => {
     // Shared with the symbol index so the preview and the parser agree on config.
@@ -441,6 +444,7 @@ export function useMermaidDocument({
     dirty,
     text,
     title,
+    diagramType,
     diagram,
     error,
     isConverting,
