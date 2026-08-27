@@ -1348,16 +1348,16 @@ mod tests {
         )
         .unwrap();
 
-        write_project_display_name(&root, "FSML architecture").unwrap();
-        write_diagram_display_name(&root, &diagram, "Teacher signup and routing").unwrap();
+        write_project_display_name(&root, "Example architecture").unwrap();
+        write_diagram_display_name(&root, &diagram, "Account flow").unwrap();
 
         assert_eq!(
             project_display_name(&root),
-            Some("FSML architecture".to_string())
+            Some("Example architecture".to_string())
         );
         assert_eq!(
             project_diagram_display_names(&root).get("flows/auth.mmd"),
-            Some(&"Teacher signup and routing".to_string())
+            Some(&"Account flow".to_string())
         );
         let metadata: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(root.join(PROJECT_METADATA_FILE)).unwrap(),

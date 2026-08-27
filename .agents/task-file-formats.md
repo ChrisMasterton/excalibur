@@ -152,7 +152,7 @@ Use this structure and preserve the generated markers.
 # Task Work Queue
 
 - Source: `linear`
-- Assignee aliases: `Chris`, `Chris-HS`
+- Assignee aliases: `Developer`, `Team-A`
 - Project archetype: `fullstack-web`
 - Last refreshed: `YYYY-MM-DD HH:MM`
 - Notes: `optional short note about source quality or ambiguity`

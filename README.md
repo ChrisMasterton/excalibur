@@ -89,11 +89,11 @@ Project metadata is an extensible JSON object. Diagram paths are relative to the
 
 ```json
 {
-  "displayName": "FSML architecture",
+  "displayName": "Example architecture",
   "diagrams": [
     {
-      "path": "identity/teacher-signup.mmd",
-      "displayName": "Teacher signup and routing"
+      "path": "identity/account-flow.mmd",
+      "displayName": "Account flow"
     }
   ]
 }

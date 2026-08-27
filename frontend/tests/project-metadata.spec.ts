@@ -14,7 +14,7 @@ test('shows project paths and edits project and diagram display names without mo
     },
     projects: [
       { path: DIAGRAMS_PATH, name: 'diagrams', added_at: 1 },
-      { path: '/mock/ossan-yokai/docs/diagrams', name: 'diagrams', added_at: 2 },
+      { path: '/mock/example-project/docs/diagrams', name: 'diagrams', added_at: 2 },
     ],
     projectFiles: {
       [DIAGRAMS_PATH]: [
@@ -33,39 +33,39 @@ test('shows project paths and edits project and diagram display names without mo
   await page.getByRole('tab', { name: 'Projects' }).click()
 
   await expect(page.getByText(DIAGRAMS_PATH, { exact: true })).toBeVisible()
-  await expect(page.getByText('/mock/ossan-yokai/docs/diagrams', { exact: true })).toBeVisible()
+  await expect(page.getByText('/mock/example-project/docs/diagrams', { exact: true })).toBeVisible()
 
   const project = page.locator('.project').filter({ hasText: DIAGRAMS_PATH })
   await project.getByRole('button', { name: 'Project display name for diagrams' }).click()
   const projectName = project.getByRole('textbox', { name: 'Project display name for diagrams' })
-  await projectName.fill('FSML architecture')
+  await projectName.fill('Example architecture')
   await projectName.press('Enter')
-  await expect(project.getByRole('button', { name: 'Project display name for FSML architecture' })).toBeVisible()
+  await expect(project.getByRole('button', { name: 'Project display name for Example architecture' })).toBeVisible()
   await expect(project).toContainText(DIAGRAMS_PATH)
 
-  await project.getByRole('button', { name: 'Expand FSML architecture' }).click()
+  await project.getByRole('button', { name: 'Expand Example architecture' }).click()
   const fileRow = project.locator('.file-row').filter({ hasText: 'Auth flow' })
   await fileRow.click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Rename diagram display name' }).click()
   const diagramName = page.getByRole('textbox', { name: 'Diagram display name for Auth flow' })
-  await diagramName.fill('Teacher signup and routing')
+  await diagramName.fill('Account flow')
   await diagramName.press('Enter')
 
-  const renamedFileRow = project.locator('.file-row').filter({ hasText: 'Teacher signup and routing' })
+  const renamedFileRow = project.locator('.file-row').filter({ hasText: 'Account flow' })
   await expect(renamedFileRow).toContainText('auth.mmd')
   await renamedFileRow.locator('.file-row-main').click()
-  await expect(page.getByRole('tab', { name: 'Teacher signup and routing' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Account flow' })).toBeVisible()
   const state = await getMockState(page)
   expect(state.invocations).toContainEqual({
     cmd: 'rename_project',
-    args: { path: DIAGRAMS_PATH, name: 'FSML architecture' },
+    args: { path: DIAGRAMS_PATH, name: 'Example architecture' },
   })
   expect(state.invocations).toContainEqual({
     cmd: 'rename_project_file_display_name',
     args: {
       projectPath: DIAGRAMS_PATH,
       path: `${DIAGRAMS_PATH}/auth.mmd`,
-      name: 'Teacher signup and routing',
+      name: 'Account flow',
     },
   })
 })
@@ -115,7 +115,7 @@ test('closes only tabs belonging to the selected project, including subfolders',
       [otherPath]: 'flowchart TD\n  Town --> Shop\n',
     },
     projects: [
-      { path: DIAGRAMS_PATH, name: 'FSML architecture', added_at: 1 },
+      { path: DIAGRAMS_PATH, name: 'Example architecture', added_at: 1 },
       { path: otherProject, name: 'Town diagrams', added_at: 2 },
     ],
     projectFiles: {
@@ -143,18 +143,18 @@ test('closes only tabs belonging to the selected project, including subfolders',
   })
   await page.goto('/')
   await page.getByRole('tab', { name: 'Projects' }).click()
-  await page.getByRole('button', { name: 'Expand FSML architecture' }).click()
+  await page.getByRole('button', { name: 'Expand Example architecture' }).click()
   await page.getByRole('button', { name: 'Expand Town diagrams' }).click()
   await page.locator(`.file-row-main[title="${nestedPath}"]`).click()
   await page.locator(`.file-row-main[title="${otherPath}"]`).click()
   await expect(page.getByRole('tab', { name: 'Authentication' })).toBeVisible()
   await expect(page.getByRole('tab', { name: 'Town map' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'More actions for FSML architecture' }).click()
+  await page.getByRole('button', { name: 'More actions for Example architecture' }).click()
   await page.getByRole('menuitem', { name: 'Close all tabs' }).click()
 
   await expect(page.getByRole('tab', { name: 'Authentication' })).toHaveCount(0)
   await expect(page.getByRole('tab', { name: 'Town map' })).toBeVisible()
-  await page.getByRole('button', { name: 'More actions for FSML architecture' }).click()
+  await page.getByRole('button', { name: 'More actions for Example architecture' }).click()
   await expect(page.getByRole('menuitem', { name: 'Close all tabs' })).toBeDisabled()
 })
