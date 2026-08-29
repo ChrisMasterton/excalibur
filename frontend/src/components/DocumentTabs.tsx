@@ -100,6 +100,15 @@ export function DocumentTabs({
           </div>
         )
       })}
+      <div className="document-tabs-actions">
+        <IconButton
+          icon="close-all"
+          label="Close all tabs"
+          size="sm"
+          className="document-tabs-close-all"
+          onClick={onCloseAll}
+        />
+      </div>
       {menu.element}
     </div>
   )

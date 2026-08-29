@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import type { CSSProperties } from 'react'
 import './App.css'
 import { AgentPromptDialog } from './components/AgentPromptDialog'
 import { DocumentTabs } from './components/DocumentTabs'
@@ -208,7 +209,10 @@ function App() {
   const activePath = activeDocument?.path ?? null
 
   return (
-    <div className={`app-shell ${layout.isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <div
+      className={`app-shell ${layout.isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}
+      style={{ '--sidebar-width': `${layout.sidebarWidth}px` } as CSSProperties}
+    >
       <Sidebar
         collapsed={layout.isSidebarCollapsed}
         onCollapsedChange={layout.setIsSidebarCollapsed}
@@ -218,6 +222,8 @@ function App() {
         onPanelChange={layout.setSidebarPanel}
         dirty={{ excalidraw: excalidraw.dirty, mermaid: mermaid.dirty }}
         onOpenSettings={layout.openSettings}
+        width={layout.sidebarWidth}
+        onWidthChange={layout.setSidebarWidth}
       >
         {layout.sidebarPanel === 'recent' ? (
           <RecentList

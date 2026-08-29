@@ -3,7 +3,16 @@ import type { SidebarPanel } from '../components/Sidebar'
 import type { DiagramKind } from '../types'
 
 const SIDEBAR_PANEL_KEY = 'excalibur.sidebar.panel'
+const SIDEBAR_WIDTH_KEY = 'excalibur.sidebar.width'
 const MERMAID_EDITOR_COLLAPSED_KEY = 'excalibur.mermaid.editorCollapsed'
+
+export const SIDEBAR_DEFAULT_WIDTH = 280
+export const SIDEBAR_MIN_WIDTH = 220
+export const SIDEBAR_MAX_WIDTH = 520
+
+export function clampSidebarWidth(width: number) {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)))
+}
 
 function readStoredFlag(key: string, fallback: boolean) {
   const raw = window.localStorage.getItem(key)
@@ -17,6 +26,10 @@ export function useAppLayout() {
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>(() =>
     window.localStorage.getItem(SIDEBAR_PANEL_KEY) === 'projects' ? 'projects' : 'recent',
   )
+  const [sidebarWidth, setSidebarWidthRaw] = useState(() => {
+    const stored = Number(window.localStorage.getItem(SIDEBAR_WIDTH_KEY))
+    return Number.isFinite(stored) && stored > 0 ? clampSidebarWidth(stored) : SIDEBAR_DEFAULT_WIDTH
+  })
   const [isMermaidEditorCollapsed, setIsMermaidEditorCollapsed] = useState(() =>
     readStoredFlag(MERMAID_EDITOR_COLLAPSED_KEY, false),
   )
@@ -30,6 +43,14 @@ export function useAppLayout() {
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_PANEL_KEY, sidebarPanel)
   }, [sidebarPanel])
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth))
+  }, [sidebarWidth])
+
+  const setSidebarWidth = useCallback((width: number) => {
+    setSidebarWidthRaw(clampSidebarWidth(width))
+  }, [])
 
   useEffect(() => {
     window.localStorage.setItem(MERMAID_EDITOR_COLLAPSED_KEY, String(isMermaidEditorCollapsed))
@@ -50,6 +71,8 @@ export function useAppLayout() {
     setIsSidebarCollapsed,
     sidebarPanel,
     setSidebarPanel,
+    sidebarWidth,
+    setSidebarWidth,
     isMermaidEditorCollapsed,
     toggleMermaidEditor,
     isSettingsOpen,

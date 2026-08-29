@@ -1,5 +1,11 @@
-import type { ReactNode } from 'react'
+import { useCallback, useRef } from 'react'
+import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import type { DiagramKind } from '../types'
+import {
+  SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  SIDEBAR_MAX_WIDTH,
+} from '../hooks/useAppLayout'
 import { Icon } from './Icon'
 import { IconButton } from './IconButton'
 
@@ -14,6 +20,8 @@ type SidebarProps = {
   onPanelChange: (panel: SidebarPanel) => void
   dirty: Record<DiagramKind, boolean>
   onOpenSettings: () => void
+  width: number
+  onWidthChange: (width: number) => void
   children: ReactNode
 }
 
@@ -36,8 +44,43 @@ export function Sidebar({
   onPanelChange,
   dirty,
   onOpenSettings,
+  width,
+  onWidthChange,
   children,
 }: SidebarProps) {
+  const dragOffsetRef = useRef(0)
+
+  const handleResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return
+      dragOffsetRef.current = width - event.clientX
+      event.currentTarget.setPointerCapture(event.pointerId)
+      event.preventDefault()
+    },
+    [width],
+  )
+
+  const handleResizePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+      onWidthChange(event.clientX + dragOffsetRef.current)
+    },
+    [onWidthChange],
+  )
+
+  const handleResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key === 'ArrowLeft') {
+        onWidthChange(width - 16)
+        event.preventDefault()
+      } else if (event.key === 'ArrowRight') {
+        onWidthChange(width + 16)
+        event.preventDefault()
+      }
+    },
+    [onWidthChange, width],
+  )
+
   return (
     <>
       <button
@@ -103,6 +146,20 @@ export function Sidebar({
             {children}
           </div>
         </div>
+        <div
+          className="sidebar-resize"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuenow={width}
+          tabIndex={collapsed ? -1 : 0}
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onKeyDown={handleResizeKeyDown}
+          onDoubleClick={() => onWidthChange(SIDEBAR_DEFAULT_WIDTH)}
+        />
       </aside>
     </>
   )
