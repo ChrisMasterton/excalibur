@@ -2,17 +2,15 @@ import { useEffect, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { SidebarPanel } from '../components/Sidebar'
-import { isDiagramPath } from '../lib/documents'
-import { isSupportedImagePath } from '../lib/images'
-import { extension } from '../lib/paths'
 import { api } from '../lib/tauri'
-import type { CanvasClientPosition, DiagramKind } from '../types'
+import type { CanvasClientPosition } from '../types'
 
 type UseNativeEventsOptions = {
+  onExitFailure: () => void
+  onError: (message: string) => void
   hasUnsavedDocuments: boolean
   /** False means the user chose to stay in the app. */
   confirmExit: () => boolean
-  openDiagram: (kind: DiagramKind, path: string) => void
   openFileFromEvent: (path: string) => void
   importNativeImagePath: (path: string, position: CanvasClientPosition | null) => Promise<boolean>
   isClientPointInCanvasFrame: (position: CanvasClientPosition) => boolean
@@ -25,9 +23,9 @@ type UseNativeEventsOptions = {
  * and the quit/close requests that have to check for unsaved work first.
  */
 export function useNativeEvents({
-  hasUnsavedDocuments,
+  onError,
+  onExitFailure,  hasUnsavedDocuments,
   confirmExit,
-  openDiagram,
   openFileFromEvent,
   importNativeImagePath,
   isClientPointInCanvasFrame,
@@ -66,6 +64,8 @@ export function useNativeEvents({
           await api.exitApp()
         } catch (error) {
           isQuittingRef.current = false
+          onExitFailure()
+          onError(String(error))
           console.error('[excalibur] close request failed to exit app', error)
         }
       })
@@ -81,7 +81,7 @@ export function useNativeEvents({
       isActive = false
       unlisten?.()
     }
-  }, [confirmExit])
+  }, [confirmExit, onError, onExitFailure])
 
   useEffect(() => {
     let isActive = true
@@ -95,32 +95,23 @@ export function useNativeEvents({
         }
         const paths = event.payload.paths
 
-        const imagePath = paths.find(isSupportedImagePath)
-        if (imagePath) {
-          const scaleFactor = await currentWindow.scaleFactor().catch(() => window.devicePixelRatio || 1)
-          const logicalPosition = event.payload.position.toLogical(scaleFactor)
-          const position = { clientX: logicalPosition.x, clientY: logicalPosition.y }
-          if (isClientPointInCanvasFrame(position)) {
-            await importNativeImagePath(imagePath, position)
-          }
-          return
-        }
-
-        const diagramPath = paths.find((path) => isDiagramPath(path))
-        if (diagramPath) {
-          openDiagram(isDiagramPath(diagramPath)!, diagramPath)
-          return
-        }
-
-        // Anything else without an extension is probably a folder: offer it as a project.
-        const folderPath = paths.find((path) => !extension(path))
-        if (folderPath) {
+        for (const path of paths) {
           try {
-            await api.addProjectPath(folderPath)
-            await refreshProjects()
-            setSidebarPanel('projects')
+            const kind = await api.pathKind(path)
+            if (kind === 'directory') {
+              await api.addProjectPath(path)
+              await refreshProjects()
+              setSidebarPanel('projects')
+            } else if (kind === 'excalidraw' || kind === 'mermaid') {
+              openFileFromEvent(path)
+            } else if (kind === 'image') {
+              const scaleFactor = await currentWindow.scaleFactor()
+              const logicalPosition = event.payload.position.toLogical(scaleFactor)
+              const position = { clientX: logicalPosition.x, clientY: logicalPosition.y }
+              if (isClientPointInCanvasFrame(position)) await importNativeImagePath(path, position)
+            }
           } catch (error) {
-            console.warn('[excalibur] dropped path is not a project folder', error)
+            onError(String(error))
           }
         }
       })
@@ -136,14 +127,16 @@ export function useNativeEvents({
       isActive = false
       unlisten?.()
     }
-  }, [importNativeImagePath, isClientPointInCanvasFrame, openDiagram, refreshProjects, setSidebarPanel])
+  }, [importNativeImagePath, isClientPointInCanvasFrame, onError, openFileFromEvent, refreshProjects, setSidebarPanel])
 
   useEffect(() => {
+    const warning = listen<string>('persistence-warning', event => onError(event.payload))
     const unlisten = listen<string>('open-file', (event) => {
       openFileFromEvent(event.payload)
     })
     return () => {
       unlisten.then((fn) => fn())
+      warning.then((fn) => fn())
     }
-  }, [openFileFromEvent])
+  }, [onError, openFileFromEvent])
 }

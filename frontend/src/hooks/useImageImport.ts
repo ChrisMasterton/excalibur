@@ -12,9 +12,10 @@ import {
 } from '../lib/images'
 import { baseName } from '../lib/paths'
 import { api } from '../lib/tauri'
-import type { CanvasClientPosition, DiagramKind, ImageImportPayload } from '../types'
+import type { CanvasClientPosition, DiagramKind, ImageImportPayload, OpenDocument } from '../types'
 
 type UseImageImportOptions = {
+  getActiveDocument: () => OpenDocument | null
   excalidrawApi: ExcalidrawImperativeAPI | null
   setWorkspace: (kind: DiagramKind) => void
   setMessage: (message: string) => void
@@ -23,7 +24,7 @@ type UseImageImportOptions = {
 export type ImageImportApi = ReturnType<typeof useImageImport>
 
 /** Dropping images (from the browser or from the OS) onto the Excalidraw canvas. */
-export function useImageImport({ excalidrawApi, setWorkspace, setMessage }: UseImageImportOptions) {
+export function useImageImport({ getActiveDocument, excalidrawApi, setWorkspace, setMessage }: UseImageImportOptions) {
   const canvasFrameRef = useRef<HTMLDivElement | null>(null)
 
   const isClientPointInCanvasFrame = useCallback((position: CanvasClientPosition) => {
@@ -41,7 +42,7 @@ export function useImageImport({ excalidrawApi, setWorkspace, setMessage }: UseI
   }, [])
 
   const importImagePayloadToCanvas = useCallback(
-    async (payload: ImageImportPayload, position: CanvasClientPosition | null) => {
+    async (payload: ImageImportPayload, position: CanvasClientPosition | null, document: OpenDocument) => {
       if (!excalidrawApi) {
         setMessage('Canvas is still starting up. Try dropping the image again.')
         return false
@@ -60,6 +61,10 @@ export function useImageImport({ excalidrawApi, setWorkspace, setMessage }: UseI
         appState,
       )
       const imageDimensions = await loadImageDimensions(payload.dataUrl)
+      if (getActiveDocument() !== document || document.mode !== 'edit') {
+        setMessage('Image import cancelled because the document changed.')
+        return false
+      }
       const displaySize = getImageDisplaySize(imageDimensions.width, imageDimensions.height, appState)
       const fileId = createImageFileId()
       const [imageElement] = convertToExcalidrawElements(
@@ -100,11 +105,16 @@ export function useImageImport({ excalidrawApi, setWorkspace, setMessage }: UseI
       setMessage(`Imported ${payload.sourcePath ? baseName(payload.sourcePath) : payload.name}.`)
       return true
     },
-    [excalidrawApi, setMessage, setWorkspace],
+    [excalidrawApi, getActiveDocument, setMessage, setWorkspace],
   )
 
   const importNativeImagePath = useCallback(
     async (path: string, position: CanvasClientPosition | null) => {
+      const document = getActiveDocument()
+      if (!document || document.kind !== 'excalidraw' || document.mode !== 'edit') {
+        setMessage('Switch to Editing to import images.')
+        return false
+      }
       try {
         const response = await api.loadImageFile(path)
         return await importImagePayloadToCanvas(
@@ -115,6 +125,7 @@ export function useImageImport({ excalidrawApi, setWorkspace, setMessage }: UseI
             sourcePath: response.path,
           },
           position,
+          document,
         )
       } catch (error) {
         console.error('[excalibur] load_image_file failed', error)
@@ -122,7 +133,7 @@ export function useImageImport({ excalidrawApi, setWorkspace, setMessage }: UseI
         return false
       }
     },
-    [importImagePayloadToCanvas, setMessage],
+    [getActiveDocument, importImagePayloadToCanvas, setMessage],
   )
 
   const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
@@ -141,15 +152,20 @@ export function useImageImport({ excalidrawApi, setWorkspace, setMessage }: UseI
       }
       event.preventDefault()
       event.stopPropagation()
+      const document = getActiveDocument()
+      if (!document || document.kind !== 'excalidraw' || document.mode !== 'edit') {
+        setMessage('Switch to Editing to import images.')
+        return
+      }
       const position = { clientX: event.clientX, clientY: event.clientY }
       try {
-        await importImagePayloadToCanvas(await fileToImageImportPayload(file), position)
+        await importImagePayloadToCanvas(await fileToImageImportPayload(file), position, document)
       } catch (error) {
         console.error('[excalibur] image drop failed', error)
         setMessage('Drop a PNG, JPEG, or WebP image to import it.')
       }
     },
-    [importImagePayloadToCanvas, setMessage],
+    [getActiveDocument, importImagePayloadToCanvas, setMessage],
   )
 
   return {

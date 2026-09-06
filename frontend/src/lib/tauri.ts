@@ -63,7 +63,8 @@ export const api = {
   loadSettings: () => invoke<unknown>('load_settings'),
   saveSettings: (settings: Record<string, unknown>) => invoke<void>('save_settings', { settings }),
 
-  takePendingFile: () => invoke<string | null>('take_pending_file'),
+  pathKind: (path: string) => invoke<'directory' | 'excalidraw' | 'mermaid' | 'image' | 'unsupported'>('path_kind', { path }),
+  takePendingFiles: () => invoke<string[]>('take_pending_file'),
   exitApp: () => invoke('exit_app'),
 }
 

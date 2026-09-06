@@ -9,7 +9,7 @@ import {
   readStoredExcalidrawAutosave,
   writeStoredExcalidrawAutosave,
 } from '../lib/autosave'
-import { EMPTY_EXCALIDRAW_CONTENTS } from '../lib/documents'
+import { EMPTY_EXCALIDRAW_CONTENTS, parseExcalidrawContents } from '../lib/documents'
 import { baseName, fileStem } from '../lib/paths'
 import { pickExcalidrawSymbol, type PickedSymbol } from '../lib/symbolPick'
 import { api, errorMessage } from '../lib/tauri'
@@ -17,25 +17,13 @@ import { ensureExcalidrawFontsLoaded, refitBoundText } from '../lib/textRefit'
 import type {
   DiagramKind,
   ExcalidrawAutosave,
-  ExcalidrawData,
   ExcalidrawSceneSnapshot,
   ExcalidrawViewport,
   OpenDocument,
 } from '../types'
 import type { DocumentPatch, ExcalidrawDocumentCache } from './useOpenDocuments'
 
-type ExcalidrawPersistedState = ExcalidrawSceneSnapshot & {
-  path: string | null
-}
-
-/**
- * What counts as "saved" once the contents land on the canvas:
- * `clean` = the contents came from disk, `keep` = leave the current baseline alone,
- * `{ snapshot }` = an explicit baseline (a restored tab; null for a never-saved one).
- */
-export type ExcalidrawBaseline = 'clean' | 'keep' | { snapshot: ExcalidrawSceneSnapshot | null }
-
-export type ApplyExcalidrawContentsRequest = {
+type ApplyExcalidrawContentsRequest = {
   /** Tab the canvas will be holding once these contents are applied. */
   documentId: string
   contents: string
@@ -43,7 +31,8 @@ export type ApplyExcalidrawContentsRequest = {
   /** Display name (already a file stem). */
   name?: string | null
   message: string
-  baseline: ExcalidrawBaseline
+  /** Contents on disk; null for a document that has never been saved. */
+  persistedScene: ExcalidrawSceneSnapshot | null
   /** Zoom the canvas to the loaded content once it is visible. */
   fitToContent?: boolean
   /** Scroll/zoom to put back, so a tab returns to where it was left. */
@@ -53,6 +42,7 @@ export type ApplyExcalidrawContentsRequest = {
 type ExcalidrawChangeArgs = Parameters<ExcalidrawChangeHandler>
 
 type UseExcalidrawDocumentOptions = {
+  getActiveDocument: () => OpenDocument | null
   /** True while the canvas is the visible workspace (it is hidden, never unmounted). */
   isVisible: boolean
   /** Changes the canvas's available width, so it has to re-measure. */
@@ -107,6 +97,7 @@ function applyViewport(api: ExcalidrawImperativeAPI, viewport: ExcalidrawViewpor
  * `useDocumentTabs`; this hook only tracks the tab it is currently mirroring.
  */
 export function useExcalidrawDocument({
+  getActiveDocument,
   isVisible,
   isSidebarCollapsed,
   setWorkspace,
@@ -146,9 +137,8 @@ export function useExcalidrawDocument({
   const nameRef = useRef('')
   const saveDirectoryRef = useRef<string | null>(null)
   const sceneSnapshotRef = useRef<ExcalidrawSceneSnapshot | null>(null)
-  const persistedRef = useRef<ExcalidrawPersistedState | null>(null)
-  const ignoreEmptyChangeUntilRef = useRef(0)
-  const suppressEmptyChangeTimerRef = useRef<number | null>(null)
+  const persistedRef = useRef<ExcalidrawSceneSnapshot | null>(null)
+  const applyingSceneRef = useRef(false)
   const autosaveSnapshotRef = useRef<ExcalidrawAutosave | null>(
     readStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY),
   )
@@ -158,14 +148,6 @@ export function useExcalidrawDocument({
   useEffect(() => {
     isVisibleRef.current = isVisible
   }, [isVisible])
-
-  useEffect(() => {
-    return () => {
-      if (suppressEmptyChangeTimerRef.current !== null) {
-        window.clearTimeout(suppressEmptyChangeTimerRef.current)
-      }
-    }
-  }, [])
 
   // The canvas is hidden (not unmounted) while Mermaid is active, so let it re-measure when it comes back.
   useEffect(() => {
@@ -217,20 +199,13 @@ export function useExcalidrawDocument({
 
   const setCurrentAutosave = useCallback((autosave: ExcalidrawAutosave | null) => {
     autosaveSnapshotRef.current = autosave
-    if (autosave) {
-      writeStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY, autosave)
-      return
+    try {
+      if (autosave) writeStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY, autosave)
+      else clearStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY)
+    } catch {
+      // The document store reports recovery-storage failures without interrupting editing.
     }
-    clearStoredExcalidrawAutosave(EXCALIDRAW_AUTOSAVE_KEY)
   }, [])
-
-  const setPersistedState = useCallback(
-    (snapshot: ExcalidrawSceneSnapshot, nextPath: string | null) => {
-      persistedRef.current = { ...snapshot, path: nextPath }
-      markDirty(false)
-    },
-    [markDirty],
-  )
 
   const updateDirtyState = useCallback(
     (snapshot: ExcalidrawSceneSnapshot | null) => {
@@ -252,7 +227,7 @@ export function useExcalidrawDocument({
         path: nextPath,
         name: nextName,
         message: nextMessage,
-        baseline,
+        persistedScene,
         fitToContent,
         viewport,
       } = request
@@ -264,8 +239,7 @@ export function useExcalidrawDocument({
       }
 
       try {
-        const parsed = JSON.parse(contents) as Partial<ExcalidrawData> & { data?: Partial<ExcalidrawData> }
-        const raw = parsed.data && parsed.data.elements ? parsed.data : parsed
+        const raw = parseExcalidrawContents(contents)
 
         const sanitizedElements = (raw.elements ?? []).map((el) => {
           const element = { ...(el as Record<string, unknown>) }
@@ -285,17 +259,6 @@ export function useExcalidrawDocument({
         }
 
         sceneSnapshotRef.current = snapshot
-        if (snapshot.hasContent) {
-          // Excalidraw can emit a transient empty change right after updateScene; don't treat it as a wipe.
-          ignoreEmptyChangeUntilRef.current = Date.now() + 3000
-          if (suppressEmptyChangeTimerRef.current !== null) {
-            window.clearTimeout(suppressEmptyChangeTimerRef.current)
-          }
-          suppressEmptyChangeTimerRef.current = window.setTimeout(() => {
-            ignoreEmptyChangeUntilRef.current = 0
-            suppressEmptyChangeTimerRef.current = null
-          }, 3000)
-        }
         // From here on the canvas belongs to this tab, so live state mirrors into it.
         liveIdRef.current = documentId
         setDocument(nextPath, normalizedName)
@@ -307,6 +270,7 @@ export function useExcalidrawDocument({
           nextAppState.scrollY = viewport.scrollY
           nextAppState.zoom = { value: viewport.zoom }
         }
+        applyingSceneRef.current = true
         excalidrawApi.updateScene({
           elements: sanitizedElements as never[],
           appState: nextAppState as never,
@@ -321,14 +285,8 @@ export function useExcalidrawDocument({
         } else {
           setCurrentAutosave(null)
         }
-        if (baseline === 'clean') {
-          setPersistedState(snapshot, nextPath)
-        } else {
-          if (baseline !== 'keep') {
-            persistedRef.current = baseline.snapshot ? { ...baseline.snapshot, path: nextPath } : null
-          }
-          updateDirtyState(snapshot)
-        }
+        persistedRef.current = persistedScene
+        updateDirtyState(snapshot)
         setMessage(nextMessage)
         if (fitToContent) {
           pendingFitToContentRef.current = true
@@ -341,9 +299,11 @@ export function useExcalidrawDocument({
       } catch (error) {
         console.error('[excalibur] applyExcalidrawContents: FAILED', error)
         setMessage('Failed to parse .excalidraw file.')
+      } finally {
+        applyingSceneRef.current = false
       }
     },
-    [excalidrawApi, setCurrentAutosave, setDocument, setPersistedState, setWorkspace, updateDirtyState],
+    [excalidrawApi, setCurrentAutosave, setDocument, setWorkspace, updateDirtyState],
   )
 
   const flushPendingContents = useCallback(() => {
@@ -362,15 +322,10 @@ export function useExcalidrawDocument({
 
   const handleChange = useCallback(
     (...[elements, appState, files]: ExcalidrawChangeArgs) => {
-      const hasContent = elements.some((element) => !element.isDeleted)
-      if (
-        !hasContent &&
-        Date.now() < ignoreEmptyChangeUntilRef.current &&
-        sceneSnapshotRef.current?.hasContent
-      ) {
-        return
-      }
-
+      if (applyingSceneRef.current || !liveIdRef.current) return
+      // A delayed callback from a previous update must not replace the current scene.
+      if (excalidrawApi && elements !== excalidrawApi.getSceneElementsIncludingDeleted()) return
+      const hasContent = elements.some(element => !element.isDeleted)
       const snapshot = {
         contents: serializeAsJSON(elements, appState, files, 'local'),
         hasContent,
@@ -388,8 +343,12 @@ export function useExcalidrawDocument({
         })
       }
       updateDirtyState(snapshot)
+      writeCache(liveIdRef.current, {
+        scene: snapshot, persistedScene: persistedRef.current, saveDirectory: saveDirectoryRef.current,
+        viewport: { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value },
+      })
     },
-    [setCurrentAutosave, updateDirtyState],
+    [excalidrawApi, setCurrentAutosave, updateDirtyState, writeCache],
   )
 
   /** The viewport the canvas is showing right now, straight from the live app state. */
@@ -429,7 +388,7 @@ export function useExcalidrawDocument({
         path: document.path,
         name: document.name,
         message: nextMessage,
-        baseline: { snapshot: cache?.persistedScene ?? null },
+        persistedScene: cache?.persistedScene ?? null,
         viewport: cache?.viewport ?? null,
         // First look at a drawing fits its content (like Mermaid); afterwards the tab's own viewport wins.
         fitToContent: !cache?.viewport && (cache?.scene?.hasContent ?? false),
@@ -467,15 +426,16 @@ export function useExcalidrawDocument({
   /** Follows a live document whose file was renamed or moved underneath it. */
   const relocateDocument = useCallback(
     (id: string, nextPath: string) => {
+      patchDocument(id, { path: nextPath, name: fileStem(nextPath) })
       if (id !== liveIdRef.current) {
         return
       }
       setDocument(nextPath, fileStem(nextPath))
-      if (persistedRef.current) {
-        persistedRef.current = { ...persistedRef.current, path: nextPath }
+      if (autosaveSnapshotRef.current) {
+        setCurrentAutosave({ ...autosaveSnapshotRef.current, path: nextPath, name: fileStem(nextPath), updatedAt: Date.now() })
       }
     },
-    [setDocument],
+    [patchDocument, setCurrentAutosave, setDocument],
   )
 
   const getLiveId = useCallback(() => liveIdRef.current, [])
@@ -519,20 +479,9 @@ export function useExcalidrawDocument({
       return
     }
     focusedTokenRef.current = highlight.token
-    // The canvas learns its size from a ResizeObserver, so wait for real dimensions.
-    let attempts = 0
-    let timer = 0
-    const scrollWhenSized = () => {
-      const { width, height } = excalidrawApi.getAppState()
-      if ((width > 0 && height > 0) || attempts >= 20) {
-        excalidrawApi.scrollToContent(targets, { fitToContent: true, animate: true })
-        return
-      }
-      attempts += 1
-      timer = window.setTimeout(scrollWhenSized, 30)
-    }
-    scrollWhenSized()
-    return () => window.clearTimeout(timer)
+    return whenCanvasSized(excalidrawApi, () =>
+      excalidrawApi.scrollToContent(targets, { fitToContent: true, animate: true }),
+    )
   }, [excalidrawApi, highlight, isVisible])
 
   /**
@@ -592,7 +541,8 @@ export function useExcalidrawDocument({
   }, [setRecoverableAutosaveSlot])
 
   const handleSave = useCallback(async () => {
-    if (!excalidrawApi) {
+    const documentId = liveIdRef.current
+    if (!excalidrawApi || !documentId) {
       return
     }
     const hasContent = excalidrawApi.getSceneElements().some((element) => !element.isDeleted)
@@ -610,18 +560,21 @@ export function useExcalidrawDocument({
         contents: serialized,
       })
       const snapshot = { contents: serialized, hasContent }
-      sceneSnapshotRef.current = snapshot
-      saveDirectoryRef.current = null
-      const nextName = fileStem(response.path)
-      setDocument(response.path, nextName)
-      if (hasContent) {
-        setCurrentAutosave({ contents: serialized, path: response.path, name: nextName, updatedAt: Date.now() })
-      } else {
-        setCurrentAutosave(null)
+      // Only advance the saved baseline. The live scene may already contain newer edits.
+      captureIntoCache()
+      const cache = readCache(documentId)
+      if (cache) {
+        writeCache(documentId, { ...cache, persistedScene: snapshot, saveDirectory: null })
+        patchDocument(documentId, { dirty: cache.scene?.contents !== serialized })
+        relocateDocument(documentId, response.path)
+        if (liveIdRef.current === documentId) {
+          saveDirectoryRef.current = null
+          persistedRef.current = snapshot
+          updateDirtyState(sceneSnapshotRef.current)
+          setMessage(`Saved ${baseName(response.path)}.`)
+          showSaveFeedback('excalidraw')
+        }
       }
-      setPersistedState(snapshot, response.path)
-      setMessage(`Saved ${baseName(response.path)}.`)
-      showSaveFeedback('excalidraw')
       refreshRecents()
       refreshProjectFiles()
     } catch (error) {
@@ -632,12 +585,15 @@ export function useExcalidrawDocument({
     }
   }, [
     excalidrawApi,
+    captureIntoCache,
+    patchDocument,
+    readCache,
     refreshProjectFiles,
     refreshRecents,
-    setCurrentAutosave,
-    setDocument,
-    setPersistedState,
+    relocateDocument,
     showSaveFeedback,
+    updateDirtyState,
+    writeCache,
   ])
 
   const handleExportPng = useCallback(() => {
@@ -663,13 +619,18 @@ export function useExcalidrawDocument({
   }, [excalidrawApi])
 
   const handleRefitText = useCallback(async () => {
-    if (!excalidrawApi) {
+    const document = getActiveDocument()
+    if (!excalidrawApi || !document || document.kind !== 'excalidraw' || document.mode !== 'edit') {
       return
     }
     setIsRefittingText(true)
     try {
       const elements = excalidrawApi.getSceneElementsIncludingDeleted()
       await ensureExcalidrawFontsLoaded(elements)
+      if (getActiveDocument() !== document || elements !== excalidrawApi.getSceneElementsIncludingDeleted()) {
+        setMessage('Text refit cancelled because the document changed.')
+        return
+      }
       const result = refitBoundText(elements)
       if (result.changed === 0) {
         setMessage('Text already fits its containers.')
@@ -686,10 +647,12 @@ export function useExcalidrawDocument({
     } finally {
       setIsRefittingText(false)
     }
-  }, [excalidrawApi])
+  }, [excalidrawApi, getActiveDocument])
 
   const handleRename = useCallback(
     async (nextName: string) => {
+      const documentId = liveIdRef.current
+      if (!documentId) return
       const currentPath = pathRef.current
       if (!currentPath) {
         setDocument(null, nextName)
@@ -700,14 +663,8 @@ export function useExcalidrawDocument({
       }
       try {
         const nextPath = await api.renameFile(currentPath, nextName)
-        setDocument(nextPath, fileStem(nextPath))
-        if (persistedRef.current) {
-          persistedRef.current = { ...persistedRef.current, path: nextPath }
-        }
-        if (autosaveSnapshotRef.current) {
-          setCurrentAutosave({ ...autosaveSnapshotRef.current, path: nextPath, name: fileStem(nextPath), updatedAt: Date.now() })
-        }
-        setMessage(`Renamed to ${baseName(nextPath)}.`)
+        relocateDocument(documentId, nextPath)
+        if (liveIdRef.current === documentId) setMessage(`Renamed to ${baseName(nextPath)}.`)
         refreshRecents()
         refreshProjectFiles()
       } catch (error) {
@@ -715,7 +672,7 @@ export function useExcalidrawDocument({
         throw error
       }
     },
-    [refreshProjectFiles, refreshRecents, setCurrentAutosave, setDocument],
+    [refreshProjectFiles, refreshRecents, relocateDocument, setCurrentAutosave, setDocument],
   )
 
   return {

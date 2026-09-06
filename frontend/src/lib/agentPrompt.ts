@@ -295,7 +295,7 @@ function outputContract(projectPath: string): string[] {
     '- Node, class, entity, and participant identifiers must be plain identifiers and must match the vocabulary above wherever the concept already exists there.',
     '- Do not overwrite an existing file unless you are updating that exact diagram.',
     '',
-    'That folder is watched by Excalibur, so a file you write there is immediately openable in the app.',
+    'After writing files, use Rescan folder in the Excalibur project menu to show them in the app.',
   ]
 }
 

@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef } from 'react'
+import { useModal } from '../hooks/useModal'
+import { useEffect, useId } from 'react'
 import { diagramIcon } from '../lib/menus'
 import type { SymbolDocumentHit } from '../lib/symbolIndex'
 import { symbolKindHint } from '../lib/symbols'
@@ -85,13 +86,7 @@ export function SymbolBoard({
   onClose,
 }: SymbolBoardProps) {
   const titleId = useId()
-  const panelRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (open) {
-      panelRef.current?.querySelector<HTMLElement>('button')?.focus()
-    }
-  }, [open])
+  const panelRef = useModal(open && Boolean(symbol), onClose)
 
   if (!open || !symbol) {
     return null
@@ -102,7 +97,7 @@ export function SymbolBoard({
       className="board-backdrop"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
-      <div ref={panelRef} className="board" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <dialog ref={panelRef} className="board" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className="board-header">
           <div className="board-titles">
             <h2 id={titleId}>{symbol.display}</h2>
@@ -125,7 +120,7 @@ export function SymbolBoard({
             />
           ))}
         </div>
-      </div>
+      </dialog>
     </div>
   )
 }

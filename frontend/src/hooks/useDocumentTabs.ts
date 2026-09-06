@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import {
   documentDisplayName,
   readStoredOpenDocuments,
+  readRecoveryDocuments,
   writeStoredOpenDocuments,
   type DocumentPatch,
   type NewDocumentInput,
@@ -39,6 +40,9 @@ type UseDocumentTabsOptions = {
   findPristineDocument: (kind?: DiagramKind) => OpenDocument | null
   patchDocument: (id: string | null, patch: DocumentPatch) => void
   closeDocuments: (ids: string[]) => OpenDocument | null
+  reportRecoveryError: (message: string) => void
+  discardRecovery: () => boolean
+  startRecoveryTracking: () => void
   setActiveId: (id: string | null) => void
 }
 
@@ -66,9 +70,12 @@ export function useDocumentTabs({
   patchDocument,
   closeDocuments,
   setActiveId,
+  startRecoveryTracking,
+  reportRecoveryError,
+  discardRecovery,
 }: UseDocumentTabsOptions) {
   const lastActiveByKindRef = useRef<Record<DiagramKind, string | null>>({ excalidraw: null, mermaid: null })
-  const pendingOpenFile = useRef<string | null>(null)
+  const pendingOpenFiles = useRef<string[]>([])
   const hasRestoredDocumentsRef = useRef(false)
   const startedRestoreRef = useRef(false)
 
@@ -82,7 +89,6 @@ export function useDocumentTabs({
     captureIntoCache: captureMermaid,
     loadDocument: loadMermaidDocument,
     releaseDocument: releaseMermaidDocument,
-    detachDocument: detachMermaidDocument,
   } = mermaid
 
   /** Copies whatever the live editors hold back into their tabs before switching. */
@@ -255,7 +261,7 @@ export function useDocumentTabs({
       snapshotLiveDocuments()
       for (const document of closing) {
         detachExcalidrawDocument(document)
-        detachMermaidDocument(document)
+        releaseMermaidDocument(document.id)
         if (lastActiveByKindRef.current[document.kind] === document.id) {
           lastActiveByKindRef.current[document.kind] = null
         }
@@ -273,7 +279,7 @@ export function useDocumentTabs({
       closeDocuments,
       createDocument,
       detachExcalidrawDocument,
-      detachMermaidDocument,
+      releaseMermaidDocument,
       getDocument,
       snapshotLiveDocuments,
     ],
@@ -323,7 +329,7 @@ export function useDocumentTabs({
   const openFileFromEvent = useCallback(
     (path: string) => {
       if (!hasRestoredDocumentsRef.current) {
-        pendingOpenFile.current = path
+        pendingOpenFiles.current.push(path)
         return
       }
       openDiagram(isDiagramPath(path) ?? 'excalidraw', path)
@@ -339,43 +345,56 @@ export function useDocumentTabs({
     if (dirty.length && !window.confirm(getExitUnsavedChangesMessage(hasExcalidrawChanges, hasMermaidChanges))) {
       return false
     }
-    return true
-  }, [getDocuments])
+    return discardRecovery()
+  }, [discardRecovery, getDocuments])
 
   /** Reopens last session's tabs, then whatever file the OS asked us to open. */
   const restoreStartupDocuments = useCallback(async () => {
     const stored = readStoredOpenDocuments()
+    let recovery: NewDocumentInput[] = []
+    let recoveryReadable = true
+    try { recovery = readRecoveryDocuments() } catch (error) {
+      recoveryReadable = false
+      reportRecoveryError(errorMessage(error, 'Unable to read document recovery. Stored data has been retained.'))
+    }
     const loaded = await Promise.all(
       stored.documents.map(async (entry) => {
         try {
+          const recovered = recovery.find(item => item.path === entry.path && item.kind === entry.kind)
+          if (recovered) return { input: recovered }
           const file =
             entry.kind === 'excalidraw'
               ? await api.loadExcalidrawPath(entry.path, false)
               : await api.loadMermaidPath(entry.path, false)
-          return { kind: entry.kind, file }
+          return { input: documentInputForFile(entry.kind, file) }
         } catch (error) {
           console.warn('[excalibur] skipping unavailable document', entry.path, error)
           return null
         }
       }),
     )
-    const restored = loaded.map((item) => (item ? addDocumentForFile(item.kind, item.file) : null))
+    const restored = loaded.map((item) => (item ? openDocument(item.input) : null))
+    for (const input of recovery) {
+      if (!input.path || !restored.some(document => document?.path === input.path)) restored.push(openDocument(input))
+    }
+    if (recoveryReadable) startRecoveryTracking()
     const target =
       restored[stored.activeIndex] ?? restored.find((document): document is OpenDocument => Boolean(document)) ?? null
 
-    let startupPath = pendingOpenFile.current
-    pendingOpenFile.current = null
-    if (!startupPath) {
-      startupPath = await api.takePendingFile().catch(() => null)
-    }
+    const startupPaths = await api.takePendingFiles().catch(error => {
+      notify(errorMessage(error, 'Unable to retrieve startup files.'))
+      return [] as string[]
+    })
+    startupPaths.push(...pendingOpenFiles.current)
+    pendingOpenFiles.current = []
     hasRestoredDocumentsRef.current = true
-
-    if (startupPath) {
-      openDiagram(isDiagramPath(startupPath) ?? 'excalidraw', startupPath)
-      return
-    }
     activateDocument((target ?? createDocument('excalidraw')).id)
-  }, [activateDocument, addDocumentForFile, createDocument, openDiagram])
+    for (const path of new Set(startupPaths)) {
+      const kind = isDiagramPath(path)
+      if (!kind) continue
+      try { await openDiagramPath(kind, path) } catch (error) { notify(errorMessage(error, `Unable to open ${path}.`)) }
+    }
+  }, [activateDocument, createDocument, notify, openDiagramPath, openDocument, reportRecoveryError, startRecoveryTracking])
 
   useEffect(() => {
     if (startedRestoreRef.current) {

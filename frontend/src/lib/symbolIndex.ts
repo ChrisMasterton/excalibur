@@ -17,7 +17,7 @@ import {
   type SymbolKind,
   type SymbolLocator,
 } from './symbols'
-import type { DiagramKind, ProjectFile } from '../types'
+import type { ProjectFile } from '../types'
 
 /** The `customData` Excalibur stamps on elements it converted from Mermaid. */
 export type ExcaliburCustomData = {
@@ -293,12 +293,4 @@ export function searchEntries(entries: readonly SymbolEntry[], query: string, li
       return String(left[3]).localeCompare(String(right[3]))
     })
     .slice(0, limit)
-}
-
-/** Everything the highlight pass needs once a document is on screen. */
-export type SymbolHighlight = {
-  path: string
-  kind: DiagramKind
-  display: string
-  locators: SymbolLocator[]
 }

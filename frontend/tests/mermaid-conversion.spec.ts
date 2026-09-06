@@ -678,6 +678,7 @@ test('recovers an autosave backup into the tab that already has that file', asyn
   await page.getByRole('button', { name: /^Save$/ }).click()
   await expect(page.getByTestId('excalidraw-path')).toHaveAttribute('data-path', '/mock/recover.excalidraw')
 
+  // Isolate legacy backup recovery; unsaved Mermaid sources now recover on reload too.
   const saved = (await getMockState(page)).savedFiles['/mock/recover.excalidraw']
   const scene = JSON.parse(saved) as { appState: Record<string, unknown> }
   const backup = JSON.stringify({ ...scene, appState: { ...scene.appState, viewBackgroundColor: '#fff5e6' } })
@@ -686,6 +687,7 @@ test('recovers an autosave backup into the tab that already has that file', asyn
   await page.addInitScript(
     ({ path, contents, backupContents }) => {
       window.__PLAYWRIGHT_TAURI_SEED__ = { files: { [path]: contents } }
+      window.localStorage.removeItem('excalibur.recoveryDocuments')
       window.localStorage.setItem(
         'excalibur.excalidraw.autosave.recovery',
         JSON.stringify({ contents: backupContents, path, name: 'recover', updatedAt: 1 }),

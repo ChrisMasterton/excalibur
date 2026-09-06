@@ -35,6 +35,10 @@ export function useKeyboardShortcuts({
 }: UseKeyboardShortcutsOptions) {
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (document.querySelector('dialog[open]')) {
+        if ((event.metaKey || event.ctrlKey) && ['w', 's', 'o', ',', 'tab'].includes(event.key.toLowerCase())) event.preventDefault()
+        return
+      }
       if (event.key === 'Escape') {
         onClearHighlight()
         return

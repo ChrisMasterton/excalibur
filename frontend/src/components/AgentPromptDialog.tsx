@@ -1,3 +1,4 @@
+import { useModal } from '../hooks/useModal'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -66,7 +67,7 @@ function AgentPromptPanel({
 }) {
   const titleId = useId()
   const presetName = useId()
-  const panelRef = useRef<HTMLDivElement | null>(null)
+  const panelRef = useModal(true, onClose)
   const copyTimerRef = useRef<number | null>(null)
 
   const [preset, setPreset] = useState<AgentPromptPreset>(readStoredPreset)
@@ -158,11 +159,6 @@ function AgentPromptPanel({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-        return
-      }
       if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         copy()
@@ -177,7 +173,7 @@ function AgentPromptPanel({
   // keystroke; coupling initial focus to it would steal focus from the text field.
   useEffect(() => {
     panelRef.current?.querySelector<HTMLElement>('input, textarea, button')?.focus()
-  }, [])
+  }, [panelRef])
 
   const field = definition.field
   const setField = (key: keyof AgentPromptInputs, value: string) => {
@@ -208,7 +204,7 @@ function AgentPromptPanel({
       className="settings-backdrop"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
-      <div
+      <dialog
         ref={panelRef}
         className="settings-dialog agent-prompt-dialog"
         role="dialog"
@@ -296,7 +292,7 @@ function AgentPromptPanel({
             onClick={copy}
           />
         </footer>
-      </div>
+      </dialog>
     </div>,
     document.body,
   )

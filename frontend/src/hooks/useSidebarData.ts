@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from '../lib/tauri'
+import { api, errorMessage } from '../lib/tauri'
 import type { ProjectItem, RecentItem } from '../types'
 
 /**
@@ -7,6 +7,8 @@ import type { ProjectItem, RecentItem } from '../types'
  * files may have changed on disk, so `ProjectsPanel` re-reads its file list.
  */
 export function useSidebarData() {
+  const [recentsError, setRecentsError] = useState('')
+  const [projectsError, setProjectsError] = useState('')
   const [recents, setRecents] = useState<RecentItem[]>([])
   const [projects, setProjects] = useState<ProjectItem[]>([])
   const [projectsRefreshToken, setProjectsRefreshToken] = useState(0)
@@ -15,8 +17,8 @@ export function useSidebarData() {
     () =>
       api
         .listRecents()
-        .then(setRecents)
-        .catch((error) => console.error('[excalibur] list_recents failed', error)),
+        .then(items => { setRecents(items); setRecentsError('') })
+        .catch((error) => setRecentsError(errorMessage(error, 'Unable to load Recent.'))),
     [],
   )
 
@@ -26,9 +28,10 @@ export function useSidebarData() {
         .listProjects()
         .then((items) => {
           setProjects(items)
+          setProjectsError('')
           setProjectsRefreshToken((token) => token + 1)
         })
-        .catch((error) => console.error('[excalibur] list_projects failed', error)),
+        .catch((error) => setProjectsError(errorMessage(error, 'Unable to load projects.'))),
     [],
   )
 
@@ -43,14 +46,17 @@ export function useSidebarData() {
   }, [refreshProjects, refreshRecents])
 
   const removeRecent = useCallback(async (item: RecentItem) => {
-    setRecents(await api.removeRecent(item.kind, item.path))
+    try { setRecents(await api.removeRecent(item.kind, item.path)); setRecentsError('') }
+    catch (error) { setRecentsError(errorMessage(error, 'Unable to remove Recent entry.')) }
   }, [])
 
   const removeProject = useCallback(async (project: ProjectItem) => {
-    setProjects(await api.removeProject(project.path))
+    try { setProjects(await api.removeProject(project.path)); setProjectsError('') }
+    catch (error) { setProjectsError(errorMessage(error, 'Unable to remove project.')) }
   }, [])
 
   return {
+    error: [recentsError, projectsError].filter(Boolean).join(" "),
     recents,
     projects,
     projectsRefreshToken,

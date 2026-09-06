@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { parseExcalidrawContents } from '../lib/documents'
 import type { ZoomPanTransform } from '../components/ZoomPanViewport'
 import type { MermaidHistoryState } from '../lib/mermaidHistory'
 import type {
@@ -33,6 +34,7 @@ export type NewDocumentInput = {
   kind: DiagramKind
   path?: string | null
   name?: string
+  displayName?: string | null
   title?: string | null
   diagramType?: string | null
   dirty?: boolean
@@ -43,11 +45,27 @@ export type NewDocumentInput = {
 }
 
 export type DocumentPatch = Partial<
-  Pick<OpenDocument, 'path' | 'name' | 'title' | 'diagramType' | 'dirty' | 'mode'>
+  Pick<OpenDocument, 'path' | 'name' | 'displayName' | 'title' | 'diagramType' | 'dirty' | 'mode'>
 >
 
 export type StoredOpenDocument = { kind: DiagramKind; path: string }
 export type StoredOpenDocuments = { documents: StoredOpenDocument[]; activeIndex: number }
+
+export const RECOVERY_DOCUMENTS_KEY = 'excalibur.recoveryDocuments'
+
+export function readRecoveryDocuments(): NewDocumentInput[] {
+  const raw = window.localStorage.getItem(RECOVERY_DOCUMENTS_KEY)
+  if (!raw) return []
+  const entries = JSON.parse(raw) as NewDocumentInput[]
+  if (!Array.isArray(entries) || entries.some(entry =>
+    !entry || (entry.kind !== 'mermaid' && entry.kind !== 'excalidraw') ||
+    (entry.kind === 'mermaid' ? typeof entry.mermaid?.history?.text !== 'string' : typeof entry.excalidraw?.scene?.contents !== 'string')
+  )) throw new Error('Unable to read document recovery. Stored data has been retained.')
+  for (const entry of entries) {
+    if (entry.kind === 'excalidraw') parseExcalidrawContents(entry.excalidraw!.scene!.contents)
+  }
+  return entries
+}
 
 export const OPEN_DOCUMENTS_KEY = 'excalibur.openDocuments'
 
@@ -55,7 +73,7 @@ let nextDocumentId = 0
 
 /** Tab label: the file's own title, else its stem, else a placeholder. */
 export function documentDisplayName(document: OpenDocument) {
-  return document.title?.trim() || document.name.trim() || 'Untitled'
+  return document.displayName?.trim() || document.title?.trim() || document.name.trim() || 'Untitled'
 }
 
 /** Paths of the previous session's tabs, restored on launch (contents are never stored). */
@@ -108,15 +126,56 @@ export function useOpenDocuments() {
   const excalidrawCacheRef = useRef(new Map<string, ExcalidrawDocumentCache>())
   const mermaidCacheRef = useRef(new Map<string, MermaidDocumentCache>())
 
+  const [recoveryError, setRecoveryError] = useState('')
+  const trackingRecoveryRef = useRef(false)
+  const persistRecovery = useCallback(() => {
+    if (!trackingRecoveryRef.current) return
+    try {
+      const entries: NewDocumentInput[] = []
+      for (const document of documentsRef.current) {
+        const excalidraw = excalidrawCacheRef.current.get(document.id)
+        const mermaid = mermaidCacheRef.current.get(document.id)
+        const dirty = document.kind === 'mermaid'
+          ? mermaid && mermaid.history.text !== mermaid.persistedText
+          : excalidraw && (excalidraw.persistedScene
+            ? excalidraw.scene?.contents !== excalidraw.persistedScene.contents
+            : excalidraw.scene?.hasContent)
+        if (dirty) entries.push({ ...document, dirty: true, excalidraw, mermaid })
+      }
+      window.localStorage.setItem(RECOVERY_DOCUMENTS_KEY, JSON.stringify(entries))
+      setRecoveryError('')
+    } catch {
+      setRecoveryError('Recovery could not be updated. Save your open documents to files before closing the app.')
+    }
+  }, [])
+  const startRecoveryTracking = useCallback(() => {
+    trackingRecoveryRef.current = true
+    persistRecovery()
+  }, [persistRecovery])
+
+  const discardRecovery = useCallback(() => {
+    try {
+      window.localStorage.removeItem(RECOVERY_DOCUMENTS_KEY)
+      trackingRecoveryRef.current = false
+      return true
+    } catch {
+      setRecoveryError('Unable to discard stored recovery. Close the affected tabs or retry exiting.')
+      return false
+    }
+  }, [])
+
   const commit = useCallback((next: OpenDocument[]) => {
     documentsRef.current = next
     setDocuments(next)
-  }, [])
+    persistRecovery()
+  }, [persistRecovery])
 
   const setActiveId = useCallback((id: string | null) => {
     activeIdRef.current = id
     setActiveIdState(id)
   }, [])
+
+  const getActiveDocument = useCallback(() => documentsRef.current.find(document => document.id === activeIdRef.current) ?? null, [])
 
   const getDocuments = useCallback(() => documentsRef.current, [])
 
@@ -138,6 +197,7 @@ export function useOpenDocuments() {
       kind: input.kind,
       path: input.path ?? null,
       name: input.name ?? '',
+      displayName: input.displayName ?? null,
       title: input.title ?? null,
       diagramType: input.diagramType ?? null,
       dirty: input.dirty ?? false,
@@ -269,12 +329,16 @@ export function useOpenDocuments() {
 
   const readExcalidrawCache = useCallback((id: string) => excalidrawCacheRef.current.get(id) ?? null, [])
   const writeExcalidrawCache = useCallback((id: string, cache: ExcalidrawDocumentCache) => {
+    if (!documentsRef.current.some(document => document.id === id)) return
     excalidrawCacheRef.current.set(id, cache)
-  }, [])
+    persistRecovery()
+  }, [persistRecovery])
   const readMermaidCache = useCallback((id: string) => mermaidCacheRef.current.get(id) ?? null, [])
   const writeMermaidCache = useCallback((id: string, cache: MermaidDocumentCache) => {
+    if (!documentsRef.current.some(document => document.id === id)) return
     mermaidCacheRef.current.set(id, cache)
-  }, [])
+    persistRecovery()
+  }, [persistRecovery])
 
   const activeDocument = useMemo(
     () => documents.find((document) => document.id === activeId) ?? null,
@@ -287,10 +351,15 @@ export function useOpenDocuments() {
   )
 
   return {
+    recoveryError,
+    reportRecoveryError: setRecoveryError,
+    discardRecovery,
+    startRecoveryTracking,
     documents,
     activeId,
     activeDocument,
     openPaths,
+    getActiveDocument,
     getDocuments,
     getDocument,
     findByPath,

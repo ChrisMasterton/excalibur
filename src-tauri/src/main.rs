@@ -4,6 +4,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,7 +15,23 @@ use tauri_plugin_dialog::DialogExt;
 const PROJECT_METADATA_FILE: &str = "excalibur.json";
 
 /// Holds the file path from startup (e.g. double-click in Finder) until the frontend is ready.
-struct PendingFile(Mutex<Option<String>>);
+struct PendingFile(Mutex<PendingFileState>);
+
+#[derive(Default)]
+struct PendingFileState {
+    paths: Vec<String>,
+    ready: bool,
+}
+
+impl PendingFileState {
+    fn receive(&mut self, path: String) -> Option<String> {
+        if self.ready { Some(path) } else { self.paths.push(path); None }
+    }
+    fn take(&mut self) -> Vec<String> {
+        self.ready = true;
+        std::mem::take(&mut self.paths)
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 struct RecentItem {
@@ -95,33 +112,36 @@ fn now_epoch() -> u64 {
         .as_secs()
 }
 
-fn app_data_dir(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
+fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|error| format!("Unable to locate app data: {error}"))
 }
 
-fn recents_path(app: &AppHandle) -> PathBuf {
-    app_data_dir(app).join("recents.json")
-}
-
-fn load_recents(app: &AppHandle) -> Vec<RecentItem> {
-    let path = recents_path(app);
-    let Ok(contents) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    serde_json::from_str(&contents).unwrap_or_default()
-}
-
-fn save_recents(app: &AppHandle, recents: &[RecentItem]) {
-    if let Ok(contents) = serde_json::to_string_pretty(recents) {
-        let _ = fs::create_dir_all(app_data_dir(app));
-        let _ = fs::write(recents_path(app), contents);
+/// Missing storage is a first launch. Corruption and read failures are not.
+fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
+    match fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| format!("Unable to read {}: {error}. The file was retained.", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
+        Err(error) => Err(format!("Unable to read {}: {error}", path.display())),
     }
 }
 
-fn update_recents(app: &AppHandle, kind: &str, path: &str, name: Option<String>) {
-    let mut recents = load_recents(app);
+fn load_recents(app: &AppHandle) -> Result<Vec<RecentItem>, String> {
+    read_json(&app_data_dir(app)?.join("recents.json"))
+}
+
+fn save_recents(app: &AppHandle, recents: &[RecentItem]) -> Result<(), String> {
+    write_file(&app_data_dir(app)?.join("recents.json"), serde_json::to_vec_pretty(recents).map_err(|error| error.to_string())?)
+}
+
+/// A diagram operation can succeed even when its secondary Recent update fails.
+fn report_recent_error(app: &AppHandle, result: Result<(), String>) {
+    if let Err(error) = result {
+        let _ = app.emit("persistence-warning", format!("The file operation completed, but Recent could not be updated: {error}"));
+    }
+}
+
+fn update_recents(app: &AppHandle, kind: &str, path: &str, name: Option<String>) -> Result<(), String> {
+    let mut recents = load_recents(app)?;
     recents.retain(|item| !(item.kind == kind && item.path == path));
     recents.insert(
         0,
@@ -134,72 +154,56 @@ fn update_recents(app: &AppHandle, kind: &str, path: &str, name: Option<String>)
             diagram_type: None,
         },
     );
-    let limit = recents_limit(app);
+    let limit = recents_limit(app)?;
     if recents.len() > limit {
         recents.truncate(limit);
     }
-    save_recents(app, &recents);
+    save_recents(app, &recents)
 }
 
-fn remove_recent_entry(app: &AppHandle, kind: &str, path: &str) {
-    let mut recents = load_recents(app);
+fn remove_recent_entry(app: &AppHandle, kind: &str, path: &str) -> Result<(), String> {
+    let mut recents = load_recents(app)?;
     recents.retain(|item| !(item.kind == kind && item.path == path));
-    save_recents(app, &recents);
+    save_recents(app, &recents)
 }
 
-fn settings_path(app: &AppHandle) -> PathBuf {
-    app_data_dir(app).join("settings.json")
+fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("settings.json"))
 }
 
-/// Settings are an open JSON object owned by the frontend; the backend only reads the keys it needs.
-fn load_settings_value(app: &AppHandle) -> serde_json::Value {
-    let Ok(contents) = fs::read_to_string(settings_path(app)) else {
-        return serde_json::Value::Object(Default::default());
-    };
-    match serde_json::from_str(&contents) {
-        Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
-        _ => serde_json::Value::Object(Default::default()),
-    }
+fn load_settings_value(app: &AppHandle) -> Result<serde_json::Value, String> {
+    let map: serde_json::Map<String, serde_json::Value> = read_json(&settings_path(app)?)?;
+    Ok(serde_json::Value::Object(map))
 }
 
-fn setting_u64(app: &AppHandle, key: &str, default: u64, min: u64, max: u64) -> u64 {
-    load_settings_value(app)
+fn setting_u64(app: &AppHandle, key: &str, default: u64, min: u64, max: u64) -> Result<u64, String> {
+    Ok(load_settings_value(app)?
         .get(key)
         .and_then(|value| value.as_f64())
         .map(|value| value.round().clamp(min as f64, max as f64) as u64)
-        .unwrap_or(default)
+        .unwrap_or(default))
 }
 
-fn recents_limit(app: &AppHandle) -> usize {
-    setting_u64(app, "recentsLimit", 10, 1, 100) as usize
+fn recents_limit(app: &AppHandle) -> Result<usize, String> {
+    Ok(setting_u64(app, "recentsLimit", 10, 1, 100)? as usize)
 }
 
-fn project_scan_depth(app: &AppHandle) -> usize {
-    setting_u64(app, "projectScanDepth", 4, 0, 10) as usize
+fn project_scan_depth(app: &AppHandle) -> Result<usize, String> {
+    Ok(setting_u64(app, "projectScanDepth", 4, 0, 10)? as usize)
 }
 
-fn projects_path(app: &AppHandle) -> PathBuf {
-    app_data_dir(app).join("projects.json")
-}
-
-fn load_projects(app: &AppHandle) -> Vec<ProjectItem> {
-    let Ok(contents) = fs::read_to_string(projects_path(app)) else {
-        return Vec::new();
-    };
-    let mut projects: Vec<ProjectItem> = serde_json::from_str(&contents).unwrap_or_default();
+fn load_projects(app: &AppHandle) -> Result<Vec<ProjectItem>, String> {
+    let mut projects: Vec<ProjectItem> = read_json(&app_data_dir(app)?.join("projects.json"))?;
     for project in &mut projects {
         project.name = project_display_name(Path::new(&project.path)).unwrap_or_else(|| {
             file_name(Path::new(&project.path)).unwrap_or_else(|| project.name.clone())
         });
     }
-    projects
+    Ok(projects)
 }
 
-fn save_projects(app: &AppHandle, projects: &[ProjectItem]) {
-    if let Ok(contents) = serde_json::to_string_pretty(projects) {
-        let _ = fs::create_dir_all(app_data_dir(app));
-        let _ = fs::write(projects_path(app), contents);
-    }
+fn save_projects(app: &AppHandle, projects: &[ProjectItem]) -> Result<(), String> {
+    write_file(&app_data_dir(app)?.join("projects.json"), serde_json::to_vec_pretty(projects).map_err(|error| error.to_string())?)
 }
 
 /// Reads the user-facing name from the project-owned metadata file.
@@ -285,7 +289,7 @@ fn save_project_metadata(
     let metadata_path = folder.join(PROJECT_METADATA_FILE);
     let mut contents = serde_json::to_string_pretty(&metadata).map_err(|error| error.to_string())?;
     contents.push('\n');
-    fs::write(metadata_path, contents).map_err(|error| error.to_string())
+    write_file(&metadata_path, contents)
 }
 
 fn write_project_display_name(folder: &Path, name: &str) -> Result<(), String> {
@@ -341,18 +345,18 @@ fn write_diagram_display_name(root: &Path, path: &Path, name: &str) -> Result<()
     save_project_metadata(&root, metadata)
 }
 
-fn registered_project_root(app: &AppHandle, path: &Path) -> Option<PathBuf> {
-    load_projects(app)
+fn registered_project_root(app: &AppHandle, path: &Path) -> Result<Option<PathBuf>, String> {
+    Ok(load_projects(app)?
         .into_iter()
         .map(|project| PathBuf::from(project.path))
         .filter(|root| path.strip_prefix(root).is_ok())
-        .max_by_key(|root| root.components().count())
+        .max_by_key(|root| root.components().count()))
 }
 
-fn diagram_display_name_for_path(app: &AppHandle, path: &Path) -> Option<String> {
-    let root = registered_project_root(app, path)?;
-    let relative_path = portable_relative_path(&root, path).ok()?;
-    project_diagram_display_names(&root).remove(&relative_path)
+fn diagram_display_name_for_path(app: &AppHandle, path: &Path) -> Result<Option<String>, String> {
+    let Some(root) = registered_project_root(app, path)? else { return Ok(None) };
+    let relative_path = portable_relative_path(&root, path)?;
+    Ok(project_diagram_display_names(&root).remove(&relative_path))
 }
 
 fn validate_diagram_metadata_relocation(
@@ -361,8 +365,8 @@ fn validate_diagram_metadata_relocation(
     target: &Path,
 ) -> Result<(), String> {
     let roots = [
-        registered_project_root(app, source),
-        registered_project_root(app, target),
+        registered_project_root(app, source)?,
+        registered_project_root(app, target)?,
     ];
     for root in roots.into_iter().flatten() {
         let metadata = project_metadata_for_write(&root)?;
@@ -381,12 +385,16 @@ fn validate_diagram_metadata_relocation(
 
 /// Keeps a diagram's metadata attached to it when its real file path changes.
 fn relocate_diagram_metadata(app: &AppHandle, source: &Path, target: &Path) -> Result<(), String> {
-    let Some(source_root) = registered_project_root(app, source) else {
+    let Some(source_root) = registered_project_root(app, source)? else {
         return Ok(());
     };
-    let Some(target_root) = registered_project_root(app, target) else {
+    let Some(target_root) = registered_project_root(app, target)? else {
         return Ok(());
     };
+    relocate_diagram_metadata_between(&source_root, &target_root, source, target)
+}
+
+fn relocate_diagram_metadata_between(source_root: &Path, target_root: &Path, source: &Path, target: &Path) -> Result<(), String> {
     let old_relative = portable_relative_path(&source_root, source)?;
     let new_relative = portable_relative_path(&target_root, target)?;
     let mut source_metadata = project_metadata_for_write(&source_root)?;
@@ -416,6 +424,8 @@ fn relocate_diagram_metadata(app: &AppHandle, source: &Path, target: &Path) -> R
     }
 
     let mut target_metadata = project_metadata_for_write(&target_root)?;
+    let target_path = target_root.join(PROJECT_METADATA_FILE);
+    let previous_target = read_optional_bytes(&target_path)?;
     let target_diagrams = target_metadata
         .entry("diagrams".to_string())
         .or_insert_with(|| serde_json::Value::Array(Vec::new()))
@@ -426,7 +436,29 @@ fn relocate_diagram_metadata(app: &AppHandle, source: &Path, target: &Path) -> R
     });
     target_diagrams.push(entry);
     save_project_metadata(&target_root, target_metadata)?;
-    save_project_metadata(&source_root, source_metadata)
+    if let Err(error) = save_project_metadata(&source_root, source_metadata) {
+        return Err(rollback_metadata(&target_path, previous_target, error));
+    }
+    Ok(())
+}
+
+fn read_optional_bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn rollback_metadata(path: &Path, previous: Option<Vec<u8>>, error: String) -> String {
+    let rollback = match previous {
+        Some(bytes) => write_file(path, bytes),
+        None => fs::remove_file(path).map_err(|error| error.to_string()),
+    };
+    match rollback {
+        Ok(()) => error,
+        Err(rollback_error) => format!("{error} Restoring {} also failed: {rollback_error}", path.display()),
+    }
 }
 
 fn register_project(app: &AppHandle, folder: &Path) -> Result<ProjectItem, String> {
@@ -434,7 +466,7 @@ fn register_project(app: &AppHandle, folder: &Path) -> Result<ProjectItem, Strin
         return Err(format!("{} is not a folder.", folder.display()));
     }
     let path_string = folder.to_string_lossy().to_string();
-    let mut projects = load_projects(app);
+    let mut projects = load_projects(app)?;
     if let Some(existing) = projects.iter().find(|item| item.path == path_string) {
         return Ok(existing.clone());
     }
@@ -446,7 +478,7 @@ fn register_project(app: &AppHandle, folder: &Path) -> Result<ProjectItem, Strin
         added_at: now_epoch(),
     };
     projects.push(item.clone());
-    save_projects(app, &projects);
+    save_projects(app, &projects)?;
     Ok(item)
 }
 
@@ -614,35 +646,27 @@ fn move_path(from: &Path, to: &Path) -> Result<(), String> {
 }
 
 fn read_file(path: &Path) -> Result<String, String> {
-    eprintln!("[excalibur] read_file: attempting to read {:?}", path);
-    match fs::read_to_string(path) {
-        Ok(contents) => {
-            eprintln!(
-                "[excalibur] read_file: success, read {} bytes from {:?}",
-                contents.len(),
-                path
-            );
-            Ok(contents)
-        }
-        Err(error) => {
-            eprintln!("[excalibur] read_file: FAILED to read {:?}: {}", path, error);
-            Err(error.to_string())
-        }
-    }
+    fs::read_to_string(path).map_err(|error| error.to_string())
 }
 
-fn write_file(path: &Path, contents: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+fn write_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<(), String> {
+    // Follow an existing symlink rather than replacing the link itself.
+    let target = if path.exists() { fs::canonicalize(path).map_err(|error| error.to_string())? } else { path.to_path_buf() };
+    let parent = target.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let permissions = fs::metadata(&target).ok().map(|metadata| metadata.permissions());
+    if permissions.as_ref().is_some_and(|permissions| permissions.readonly()) {
+        return Err(format!("{} is read-only.", target.display()));
     }
-    fs::write(path, contents).map_err(|error| error.to_string())
-}
-
-fn write_binary_file(path: &Path, contents: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    fs::write(path, contents).map_err(|error| error.to_string())
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+    temporary.write_all(contents.as_ref()).map_err(|error| error.to_string())?;
+    if let Some(permissions) = permissions { temporary.as_file().set_permissions(permissions).map_err(|error| error.to_string())?; }
+    temporary.as_file().sync_all().map_err(|error| error.to_string())?;
+    temporary.persist(&target).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    fs::File::open(parent).and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("Saved {}, but syncing its directory failed: {error}", target.display()))?;
+    Ok(())
 }
 
 fn file_name(path: &Path) -> Option<String> {
@@ -709,36 +733,36 @@ fn supported_image_mime_type(path: &Path) -> Option<&'static str> {
     }
 }
 
-fn recents_with_titles(app: &AppHandle) -> Vec<RecentItem> {
-    let mut recents = load_recents(app);
+fn recents_with_titles(app: &AppHandle) -> Result<Vec<RecentItem>, String> {
+    let mut recents = load_recents(app)?;
     for item in recents.iter_mut() {
         let path = Path::new(&item.path);
         let head = (item.kind == "mermaid")
             .then(|| read_diagram_head(path))
             .flatten();
-        item.title = diagram_display_name_for_path(app, path)
+        item.title = diagram_display_name_for_path(app, path)?
             .or_else(|| head.as_deref().and_then(mermaid_frontmatter_title));
         item.diagram_type = head
             .as_deref()
             .and_then(mermaid_diagram_type)
             .map(str::to_string);
     }
-    recents
+    Ok(recents)
 }
 
 #[tauri::command]
-fn list_recents(app: AppHandle) -> Vec<RecentItem> {
+fn list_recents(app: AppHandle) -> Result<Vec<RecentItem>, String> {
     recents_with_titles(&app)
 }
 
 #[tauri::command]
-fn remove_recent(app: AppHandle, kind: String, path: String) -> Vec<RecentItem> {
-    remove_recent_entry(&app, &kind, &path);
+fn remove_recent(app: AppHandle, kind: String, path: String) -> Result<Vec<RecentItem>, String> {
+    remove_recent_entry(&app, &kind, &path)?;
     recents_with_titles(&app)
 }
 
 #[tauri::command]
-fn load_settings(app: AppHandle) -> serde_json::Value {
+fn load_settings(app: AppHandle) -> Result<serde_json::Value, String> {
     load_settings_value(&app)
 }
 
@@ -748,12 +772,11 @@ fn save_settings(app: AppHandle, settings: serde_json::Value) -> Result<(), Stri
         return Err("Settings must be an object.".to_string());
     }
     let contents = serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?;
-    fs::create_dir_all(app_data_dir(&app)).map_err(|error| error.to_string())?;
-    fs::write(settings_path(&app), contents).map_err(|error| error.to_string())
+    write_file(&settings_path(&app)?, contents)
 }
 
 #[tauri::command]
-fn list_projects(app: AppHandle) -> Vec<ProjectItem> {
+fn list_projects(app: AppHandle) -> Result<Vec<ProjectItem>, String> {
     load_projects(&app)
 }
 
@@ -782,11 +805,11 @@ fn add_project_path(app: AppHandle, path: String) -> Result<ProjectItem, String>
 }
 
 #[tauri::command]
-fn remove_project(app: AppHandle, path: String) -> Vec<ProjectItem> {
-    let mut projects = load_projects(&app);
+fn remove_project(app: AppHandle, path: String) -> Result<Vec<ProjectItem>, String> {
+    let mut projects = load_projects(&app)?;
     projects.retain(|item| item.path != path);
-    save_projects(&app, &projects);
-    projects
+    save_projects(&app, &projects)?;
+    Ok(projects)
 }
 
 /// Changes only the project's display name. The folder path and every diagram
@@ -798,7 +821,7 @@ fn rename_project(app: AppHandle, path: String, name: String) -> Result<ProjectI
     if !project_path.is_dir() {
         return Err(format!("{} is not available.", project_path.display()));
     }
-    let mut projects = load_projects(&app);
+    let mut projects = load_projects(&app)?;
     let item = projects
         .iter_mut()
         .find(|item| item.path == path)
@@ -806,7 +829,7 @@ fn rename_project(app: AppHandle, path: String, name: String) -> Result<ProjectI
     write_project_display_name(&project_path, &name)?;
     item.name = name;
     let updated = item.clone();
-    save_projects(&app, &projects);
+    save_projects(&app, &projects)?;
     Ok(updated)
 }
 
@@ -822,7 +845,7 @@ fn list_project_files(app: AppHandle, path: String) -> Result<Vec<ProjectFile>, 
         &root,
         &root,
         0,
-        project_scan_depth(&app),
+        project_scan_depth(&app)?,
         &display_names,
         &mut files,
     );
@@ -847,7 +870,7 @@ fn rename_project_file_display_name(
     if !root.is_dir() {
         return Err(format!("{} is not available.", root.display()));
     }
-    if !load_projects(&app)
+    if !load_projects(&app)?
         .iter()
         .any(|project| project.path == project_path)
     {
@@ -886,8 +909,8 @@ fn move_file_to_project(app: AppHandle, path: String, project_path: String) -> R
         });
     }
     let target_string = target.to_string_lossy().to_string();
-    remove_recent_entry(&app, kind, &path);
-    update_recents(&app, kind, &target_string, Some(name));
+    report_recent_error(&app, remove_recent_entry(&app, kind, &path));
+    report_recent_error(&app, update_recents(&app, kind, &target_string, Some(name)));
     Ok(target_string)
 }
 
@@ -921,58 +944,46 @@ fn rename_file(app: AppHandle, path: String, name: String) -> Result<String, Str
         });
     }
     let target_string = target.to_string_lossy().to_string();
-    remove_recent_entry(&app, kind, &path);
-    update_recents(&app, kind, &target_string, file_name(&target));
+    report_recent_error(&app, remove_recent_entry(&app, kind, &path));
+    report_recent_error(&app, update_recents(&app, kind, &target_string, file_name(&target)));
     Ok(target_string)
 }
 
 #[tauri::command]
 async fn open_excalidraw_file(app: AppHandle) -> Result<Option<OpenFileResponse>, String> {
-    eprintln!("[excalibur] open_excalidraw_file: opening file dialog");
     let (sender, mut receiver) = channel(1);
     app.dialog()
         .file()
         .add_filter("Excalidraw", &["excalidraw", "json"])
         .pick_file(move |file_path| {
-            eprintln!("[excalibur] open_excalidraw_file: file dialog callback received");
             let _ = sender.try_send(file_path);
         });
-
-    eprintln!("[excalibur] open_excalidraw_file: waiting for file dialog response");
-    let Some(file_path) = receiver.recv().await else {
-        eprintln!("[excalibur] open_excalidraw_file: receiver closed, returning None");
+    let Some(Some(file)) = receiver.recv().await else {
         return Ok(None);
     };
-    let Some(file) = file_path else {
-        eprintln!("[excalibur] open_excalidraw_file: user cancelled dialog, returning None");
-        return Ok(None);
-    };
-    let path = file.into_path().map_err(|e| {
-        eprintln!("[excalibur] open_excalidraw_file: failed to convert path: {}", e);
-        e.to_string()
-    })?;
-    eprintln!("[excalibur] open_excalidraw_file: selected path = {:?}", path);
+    let path = file.into_path().map_err(|error| error.to_string())?;
+    load_diagram_path(&app, path, "excalidraw", true).map(Some)
+}
 
+/// All file-open routes read labels and update Recent in the same place.
+fn load_diagram_path(
+    app: &AppHandle,
+    path: PathBuf,
+    kind: &str,
+    track_recent: bool,
+) -> Result<OpenFileResponse, String> {
     let contents = read_file(&path)?;
     let name = file_name(&path);
     let path_string = path.to_string_lossy().to_string();
-
-    eprintln!(
-        "[excalibur] open_excalidraw_file: updating recents for path={}, name={:?}",
-        path_string, name
-    );
-    update_recents(&app, "excalidraw", &path_string, name.clone());
-
-    eprintln!(
-        "[excalibur] open_excalidraw_file: returning response with {} bytes of content",
-        contents.len()
-    );
-    Ok(Some(OpenFileResponse {
+    if track_recent {
+        report_recent_error(app, update_recents(app, kind, &path_string, name.clone()));
+    }
+    Ok(OpenFileResponse {
         path: path_string,
         name,
-        display_name: diagram_display_name_for_path(&app, &path),
+        display_name: diagram_display_name_for_path(app, &path)?,
         contents,
-    }))
+    })
 }
 
 #[tauri::command]
@@ -981,31 +992,7 @@ fn load_excalidraw_path(
     path: String,
     track_recent: Option<bool>,
 ) -> Result<OpenFileResponse, String> {
-    eprintln!("[excalibur] load_excalidraw_path: loading from path={}", path);
-    let path_buf = PathBuf::from(&path);
-
-    let contents = read_file(&path_buf)?;
-    let name = file_name(&path_buf);
-    let path_string = path_buf.to_string_lossy().to_string();
-
-    if track_recent.unwrap_or(true) {
-        eprintln!(
-            "[excalibur] load_excalidraw_path: updating recents for path={}, name={:?}",
-            path_string, name
-        );
-        update_recents(&app, "excalidraw", &path_string, name.clone());
-    }
-
-    eprintln!(
-        "[excalibur] load_excalidraw_path: returning response with {} bytes of content",
-        contents.len()
-    );
-    Ok(OpenFileResponse {
-        path: path_string,
-        name,
-        display_name: diagram_display_name_for_path(&app, &path_buf),
-        contents,
-    })
+    load_diagram_path(&app, PathBuf::from(path), "excalidraw", track_recent.unwrap_or(true))
 }
 
 #[tauri::command]
@@ -1070,7 +1057,7 @@ async fn save_excalidraw_file(
     write_file(&path, &request.contents)?;
     let name = request.name.or_else(|| file_name(&path));
     let path_string = path.to_string_lossy().to_string();
-    update_recents(&app, "excalidraw", &path_string, name);
+    report_recent_error(&app, update_recents(&app, "excalidraw", &path_string, name));
 
     Ok(SaveFileResponse { path: path_string })
 }
@@ -1098,7 +1085,7 @@ async fn save_png_file(
         .into_path()
         .map_err(|e| e.to_string())?;
 
-    write_binary_file(&path, &request.contents)?;
+    write_file(&path, &request.contents)?;
     Ok(SaveFileResponse {
         path: path.to_string_lossy().to_string(),
     })
@@ -1114,24 +1101,11 @@ async fn open_mermaid_file(app: AppHandle) -> Result<Option<OpenFileResponse>, S
             let _ = sender.try_send(file_path);
         });
 
-    let Some(file_path) = receiver.recv().await else {
+    let Some(Some(file)) = receiver.recv().await else {
         return Ok(None);
     };
-    let Some(file) = file_path else {
-        return Ok(None);
-    };
-    let path = file.into_path().map_err(|e| e.to_string())?;
-    let contents = read_file(&path)?;
-    let name = file_name(&path);
-    let path_string = path.to_string_lossy().to_string();
-    update_recents(&app, "mermaid", &path_string, name.clone());
-
-    Ok(Some(OpenFileResponse {
-        path: path_string,
-        name,
-        display_name: diagram_display_name_for_path(&app, &path),
-        contents,
-    }))
+    let path = file.into_path().map_err(|error| error.to_string())?;
+    load_diagram_path(&app, path, "mermaid", true).map(Some)
 }
 
 #[tauri::command]
@@ -1140,20 +1114,7 @@ fn load_mermaid_path(
     path: String,
     track_recent: Option<bool>,
 ) -> Result<OpenFileResponse, String> {
-    let path_buf = PathBuf::from(path);
-    let contents = read_file(&path_buf)?;
-    let name = file_name(&path_buf);
-    let path_string = path_buf.to_string_lossy().to_string();
-    if track_recent.unwrap_or(true) {
-        update_recents(&app, "mermaid", &path_string, name.clone());
-    }
-
-    Ok(OpenFileResponse {
-        path: path_string,
-        name,
-        display_name: diagram_display_name_for_path(&app, &path_buf),
-        contents,
-    })
+    load_diagram_path(&app, PathBuf::from(path), "mermaid", track_recent.unwrap_or(true))
 }
 
 #[tauri::command]
@@ -1190,18 +1151,28 @@ async fn save_mermaid_file(
     write_file(&path, &request.contents)?;
     let name = request.name.or_else(|| file_name(&path));
     let path_string = path.to_string_lossy().to_string();
-    update_recents(&app, "mermaid", &path_string, name);
+    report_recent_error(&app, update_recents(&app, "mermaid", &path_string, name));
 
     Ok(SaveFileResponse { path: path_string })
 }
 
 /// Returns (and clears) the file path that was pending from app startup.
 #[tauri::command]
-fn take_pending_file(app: AppHandle) -> Option<String> {
-    let state = app.state::<PendingFile>();
-    let path = state.0.lock().unwrap().take();
-    eprintln!("[excalibur] take_pending_file: {:?}", path);
-    path
+fn take_pending_file(app: AppHandle) -> Vec<String> {
+    app.state::<PendingFile>().0.lock().unwrap().take()
+}
+
+fn classify_path(path: &Path) -> Result<&'static str, String> {
+    let metadata = fs::metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if metadata.is_dir() { return Ok("directory") }
+    if let Some(kind) = diagram_kind(path) { return Ok(kind) }
+    if supported_image_mime_type(path).is_some() { return Ok("image") }
+    Ok("unsupported")
+}
+
+#[tauri::command]
+fn path_kind(path: String) -> Result<String, String> {
+    classify_path(Path::new(&path)).map(str::to_string)
 }
 
 #[tauri::command]
@@ -1219,7 +1190,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
-        .manage(PendingFile(Mutex::new(None)))
+        .manage(PendingFile(Mutex::new(PendingFileState::default())))
         .invoke_handler(tauri::generate_handler![
             list_recents,
             remove_recent,
@@ -1242,6 +1213,7 @@ fn main() {
             open_mermaid_file,
             load_mermaid_path,
             save_mermaid_file,
+            path_kind,
             take_pending_file,
             exit_app
         ])
@@ -1254,8 +1226,7 @@ fn main() {
                     if let Some(path) = file_path_from_url(url) {
                         eprintln!("[excalibur] storing pending file for startup: {}", path);
                         let state = app.state::<PendingFile>();
-                        *state.0.lock().unwrap() = Some(path);
-                        break;
+                        state.0.lock().unwrap().receive(path);
                     }
                 }
             }
@@ -1269,8 +1240,8 @@ fn main() {
                 for url in &urls {
                     if let Some(path) = file_path_from_url(url) {
                         eprintln!("[excalibur] emitting open-file for runtime path: {}", path);
-                        let _ = handle.emit("open-file", path);
-                        break;
+                        let ready_path = handle.state::<PendingFile>().0.lock().unwrap().receive(path);
+                        if let Some(path) = ready_path { let _ = handle.emit("open-file", path); }
                     }
                 }
             });
@@ -1367,5 +1338,107 @@ mod tests {
         assert_eq!(metadata["diagrams"][0]["path"], "flows/auth.mmd");
 
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    #[test]
+    fn native_open_requests_queue_until_the_frontend_is_ready() {
+        let mut pending = PendingFileState::default();
+        assert!(pending.receive("first.mmd".into()).is_none());
+        assert!(pending.receive("second.mmd".into()).is_none());
+        assert_eq!(pending.take(), vec!["first.mmd", "second.mmd"]);
+        assert_eq!(pending.receive("third.mmd".into()), Some("third.mmd".into()));
+        assert!(pending.take().is_empty());
+    }
+
+    #[test]
+    fn corrupted_storage_is_retained_and_missing_storage_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projects.json");
+        assert!(read_json::<Vec<ProjectItem>>(&path).unwrap().is_empty());
+        fs::write(&path, b"{broken").unwrap();
+        assert!(read_json::<Vec<ProjectItem>>(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"{broken");
+        assert!(read_json::<Vec<ProjectItem>>(dir.path()).is_err());
+    }
+
+    #[test]
+    fn replacement_preserves_existing_bytes_on_failure_and_cleans_temporary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("diagram.mmd");
+        write_file(&path, "first").unwrap();
+        write_file(&path, "second").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+        let original = fs::metadata(&path).unwrap().permissions();
+        let mut readonly = original.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&path, readonly).unwrap();
+        assert!(write_file(&path, "must not replace").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+        fs::set_permissions(&path, original).unwrap();
+        let directory_target = dir.path().join("directory");
+        fs::create_dir(&directory_target).unwrap();
+        assert!(write_file(&directory_target, "cannot replace a directory").is_err());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn failed_source_metadata_write_rolls_back_destination_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let target = dir.path().join("target");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&target).unwrap();
+        let source_metadata = source.join(PROJECT_METADATA_FILE);
+        let target_metadata = target.join(PROJECT_METADATA_FILE);
+        fs::write(&source_metadata, r#"{"diagrams":[{"path":"a.mmd","displayName":"Portable label","extra":7}]}"#).unwrap();
+        let original_target = b"{ \"extra\": 23 }";
+        fs::write(&target_metadata, original_target).unwrap();
+        let original_permissions = fs::metadata(&source_metadata).unwrap().permissions();
+        let mut permissions = original_permissions.clone();
+        permissions.set_readonly(true);
+        fs::set_permissions(&source_metadata, permissions).unwrap();
+        assert!(relocate_diagram_metadata_between(&source, &target, &source.join("a.mmd"), &target.join("a.mmd")).is_err());
+        assert_eq!(fs::read(&target_metadata).unwrap(), original_target);
+        fs::set_permissions(&source_metadata, original_permissions).unwrap();
+        // A destination metadata file created by the operation must disappear on rollback.
+        fs::remove_file(&target_metadata).unwrap();
+        let mut permissions = fs::metadata(&source_metadata).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&source_metadata, permissions).unwrap();
+        assert!(relocate_diagram_metadata_between(&source, &target, &source.join("a.mmd"), &target.join("a.mmd")).is_err());
+        assert!(!target_metadata.exists());
+    }
+
+    #[test]
+    fn dotted_folders_are_classified_by_the_filesystem() {
+        let dir = tempfile::tempdir().unwrap();
+        let dotted = dir.path().join("project.mmd");
+        fs::create_dir(&dotted).unwrap();
+        assert_eq!(classify_path(&dotted).unwrap(), "directory");
+        let drawing = dotted.join("flow.mmd");
+        fs::write(&drawing, "flowchart TD").unwrap();
+        assert_eq!(classify_path(&drawing).unwrap(), "mermaid");
+        assert!(classify_path(&dotted.join("missing")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_a_symlink_updates_its_target_and_preserves_permissions() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.mmd");
+        let link = dir.path().join("link.mmd");
+        fs::write(&target, "before").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
+        symlink(&target, &link).unwrap();
+        write_file(&link, "after").unwrap();
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "after");
+        assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o640);
     }
 }

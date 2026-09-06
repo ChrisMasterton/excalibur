@@ -239,7 +239,14 @@ export async function installTauriMock(page: Page) {
             }
           }
           case 'take_pending_file':
-            return null
+            return []
+          case 'path_kind': {
+            const path = String(args.path)
+            if (seed().projects?.some(project => project.path === path)) return 'directory'
+            if (/\.(png|jpe?g|webp)$/i.test(path)) return 'image'
+            if (!Object.hasOwn(seed().files ?? {}, path)) throw new Error(`Missing mock path: ${path}`)
+            return path.endsWith('.excalidraw') ? 'excalidraw' : /\.(mmd|mermaid)$/.test(path) ? 'mermaid' : 'unsupported'
+          }
           case 'rename_file': {
             const oldPath = args.path
             const directory = oldPath.slice(0, oldPath.lastIndexOf('/'))

@@ -117,15 +117,15 @@ Write-Host "Excalibur Windows Install"
 Write-Host ""
 
 Write-Info "Checking prerequisites..."
-Require-Command -Name "node" -InstallHint "Install Node.js 18+ from https://nodejs.org/"
+Require-Command -Name "node" -InstallHint "Install Node.js 22.12+ from https://nodejs.org/"
 Require-Command -Name "npm.cmd" -InstallHint "Install npm with Node.js."
 Require-Command -Name "rustc" -InstallHint "Install Rust from https://rustup.rs/"
 Require-Command -Name "cargo" -InstallHint "Install Rust from https://rustup.rs/"
 
 $nodeVersion = (& node --version).Trim()
-$nodeMajor = [int]($nodeVersion.TrimStart("v").Split(".")[0])
-if ($nodeMajor -lt 18) {
-    Fail "Node.js 18+ is required. Current version: $nodeVersion"
+$parsedNodeVersion = [version]$nodeVersion.TrimStart("v")
+if ($parsedNodeVersion -lt [version]"22.12.0") {
+    Fail "Node.js 22.12+ is required. Current version: $nodeVersion"
 }
 Write-Success "Node.js $nodeVersion found"
 Write-Success "npm $((& npm.cmd --version).Trim()) found"

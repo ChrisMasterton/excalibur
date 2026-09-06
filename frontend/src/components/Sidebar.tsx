@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useRef } from 'react'
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import type { DiagramKind } from '../types'
 import {
@@ -50,36 +50,27 @@ export function Sidebar({
 }: SidebarProps) {
   const dragOffsetRef = useRef(0)
 
-  const handleResizePointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0) return
-      dragOffsetRef.current = width - event.clientX
-      event.currentTarget.setPointerCapture(event.pointerId)
+  function handleResizePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return
+    dragOffsetRef.current = width - event.clientX
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+
+  function handleResizePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+    onWidthChange(event.clientX + dragOffsetRef.current)
+  }
+
+  function handleResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'ArrowLeft') {
+      onWidthChange(width - 16)
       event.preventDefault()
-    },
-    [width],
-  )
-
-  const handleResizePointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
-      onWidthChange(event.clientX + dragOffsetRef.current)
-    },
-    [onWidthChange],
-  )
-
-  const handleResizeKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (event.key === 'ArrowLeft') {
-        onWidthChange(width - 16)
-        event.preventDefault()
-      } else if (event.key === 'ArrowRight') {
-        onWidthChange(width + 16)
-        event.preventDefault()
-      }
-    },
-    [onWidthChange, width],
-  )
+    } else if (event.key === 'ArrowRight') {
+      onWidthChange(width + 16)
+      event.preventDefault()
+    }
+  }
 
   return (
     <>

@@ -1,12 +1,15 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { useModal } from '../hooks/useModal'
+import { useId, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DEFAULT_SETTINGS, SETTINGS_LIMITS, type Settings } from '../lib/settings'
 import { IconButton } from './IconButton'
 
 type SettingsDialogProps = {
+  error: string
+  disabled: boolean
+  onRetry?: () => void
   open: boolean
   settings: Settings
-  settingsPath?: string | null
   onChange: (next: Settings) => void
   onClose: () => void
 }
@@ -33,24 +36,9 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 /** Modal editor for the global settings; every change applies and saves immediately. */
-export function SettingsDialog({ open, settings, settingsPath, onChange, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ open, settings, error, disabled, onRetry, onChange, onClose }: SettingsDialogProps) {
   const titleId = useId()
-  const panelRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    panelRef.current?.querySelector<HTMLElement>('input, select, button')?.focus()
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose, open])
+  const panelRef = useModal(open, onClose)
 
   if (!open) {
     return null
@@ -62,16 +50,17 @@ export function SettingsDialog({ open, settings, settingsPath, onChange, onClose
 
   return createPortal(
     <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div ref={panelRef} className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <dialog ref={panelRef} className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className="settings-header">
           <div>
             <h2 id={titleId}>Settings</h2>
-            <p>Shared by every Excalibur window{settingsPath ? ` · ${settingsPath}` : ''}</p>
+            <p>Applies to this window and future launches.</p>
           </div>
           <IconButton icon="x" label="Close settings" onClick={onClose} />
         </header>
 
-        <div className="settings-body">
+        {error && <p role="alert">{error} {onRetry && <button onClick={onRetry}>Retry loading settings</button>}</p>}
+        <fieldset disabled={disabled} className="settings-body">
           <Section title="Mermaid preview">
             <Field label="Zoom speed" hint="Wheel, pinch, and the +/− buttons">
               <input
@@ -141,17 +130,17 @@ export function SettingsDialog({ open, settings, settingsPath, onChange, onClose
               />
             </Field>
           </Section>
-        </div>
+        </fieldset>
 
         <footer className="settings-footer">
-          <button type="button" className="settings-reset" onClick={() => onChange({ ...DEFAULT_SETTINGS })}>
+          <button type="button" className="settings-reset" disabled={disabled} onClick={() => onChange({ ...DEFAULT_SETTINGS })}>
             Reset to defaults
           </button>
           <button type="button" className="settings-done" onClick={onClose}>
             Done
           </button>
         </footer>
-      </div>
+      </dialog>
     </div>,
     document.body,
   )

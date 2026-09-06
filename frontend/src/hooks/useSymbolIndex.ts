@@ -14,6 +14,7 @@ export type SymbolIndexStatus = {
   /** Files read so far, and how many there are in total. */
   indexed: number
   total: number
+  errors: string[]
   ready: boolean
 }
 
@@ -30,7 +31,7 @@ type UseSymbolIndexOptions = {
 
 export type SymbolIndexApi = ReturnType<typeof useSymbolIndex>
 
-const IDLE_STATUS: SymbolIndexStatus = { isIndexing: false, indexed: 0, total: 0, ready: false }
+const IDLE_STATUS: SymbolIndexStatus = { isIndexing: false, indexed: 0, total: 0, ready: false, errors: [] }
 
 /** Hands the event loop back so a large project cannot freeze the sidebar. */
 function yieldToBrowser() {
@@ -39,7 +40,7 @@ function yieldToBrowser() {
 
 /**
  * The symbol index for every registered project, built lazily the first time
- * something asks for it and refreshed per file whenever its mtime moves.
+ * something asks for it and refreshed after writes or an explicit folder rescan.
  *
  * Files are read through the ordinary load commands with `trackRecent: false`,
  * one at a time with a yield between them, so indexing never blocks the UI.
@@ -48,31 +49,22 @@ export function useSymbolIndex({ projects, refreshToken }: UseSymbolIndexOptions
   const [entriesByProject, setEntriesByProject] = useState<Record<string, SymbolEntry[]>>({})
   const [status, setStatus] = useState<SymbolIndexStatus>(IDLE_STATUS)
   const [isRequested, setIsRequested] = useState(false)
-  /** path → extracted entries, tagged with file and display-metadata identity. */
-  const cacheRef = useRef(new Map<string, { signature: string; entries: SymbolEntry[] }>())
   const runIdRef = useRef(0)
 
   /** Starts (or refreshes) the index. Cheap to call repeatedly. */
   const ensureIndex = useCallback(() => setIsRequested(true), [])
 
   const readFile = useCallback(async (file: ProjectFile) => {
-    const cached = cacheRef.current.get(file.path)
-    const signature = `${file.updated_at}\0${file.display_name ?? ''}\0${file.title ?? ''}`
-    if (cached && cached.signature === signature) {
-      return cached.entries
-    }
     try {
       const response =
         file.kind === 'excalidraw'
           ? await api.loadExcalidrawPath(file.path, false)
           : await api.loadMermaidPath(file.path, false)
       const entries = await indexFile(file, response.contents)
-      cacheRef.current.set(file.path, { signature, entries })
       return entries
     } catch (error) {
       console.warn('[excalibur] unable to index', file.path, error)
-      cacheRef.current.set(file.path, { signature, entries: [] })
-      return []
+      throw error
     }
   }, [])
 
@@ -80,6 +72,8 @@ export function useSymbolIndex({ projects, refreshToken }: UseSymbolIndexOptions
     if (!isRequested) {
       return
     }
+    // An explicit refresh means disk contents may have changed even when timestamps match.
+    const errors: string[] = []
     const runId = runIdRef.current + 1
     runIdRef.current = runId
     const isCurrent = () => runIdRef.current === runId
@@ -90,6 +84,7 @@ export function useSymbolIndex({ projects, refreshToken }: UseSymbolIndexOptions
           project,
           files: await api.listProjectFiles(project.path).catch((error) => {
             console.warn('[excalibur] unable to list', project.path, error)
+            errors.push(project.path)
             return [] as ProjectFile[]
           }),
         })),
@@ -98,19 +93,19 @@ export function useSymbolIndex({ projects, refreshToken }: UseSymbolIndexOptions
         return
       }
       const total = listings.reduce((sum, listing) => sum + listing.files.length, 0)
-      setStatus({ isIndexing: true, indexed: 0, total, ready: false })
+      setStatus({ isIndexing: true, indexed: 0, total, ready: false, errors: [] })
 
       let indexed = 0
       const next: Record<string, SymbolEntry[]> = {}
       for (const listing of listings) {
         const entries: SymbolEntry[] = []
         for (const file of listing.files) {
-          entries.push(...(await readFile(file)))
+          try { entries.push(...(await readFile(file))) } catch { errors.push(file.path) }
           if (!isCurrent()) {
             return
           }
           indexed += 1
-          setStatus({ isIndexing: true, indexed, total, ready: false })
+          setStatus({ isIndexing: true, indexed, total, ready: false, errors: [] })
           await yieldToBrowser()
           if (!isCurrent()) {
             return
@@ -120,10 +115,11 @@ export function useSymbolIndex({ projects, refreshToken }: UseSymbolIndexOptions
         setEntriesByProject({ ...next })
       }
       setEntriesByProject(next)
-      setStatus({ isIndexing: false, indexed: total, total, ready: true })
+      setStatus({ isIndexing: false, indexed: total, total, ready: true, errors })
     }
 
     void build()
+    return () => { runIdRef.current += 1 }
   }, [isRequested, projects, readFile, refreshToken])
 
   const search = useCallback(

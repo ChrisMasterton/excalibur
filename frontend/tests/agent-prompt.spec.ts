@@ -93,7 +93,7 @@ test('builds a prompt carrying the project path, its diagrams, and its vocabular
   expect(prompt).toContain('title: Checkout and payment capture')
   expect(prompt).toContain('kebab-case')
   expect(prompt).toContain('Write each diagram as its own file directly into /mock/domain')
-  expect(prompt).toContain('watched by Excalibur')
+  expect(prompt).toContain('Rescan folder')
 
   // The default preset is the architectural overview.
   expect(prompt).toContain('architectural overview')

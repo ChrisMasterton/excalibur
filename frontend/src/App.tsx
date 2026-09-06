@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import type { CSSProperties } from 'react'
 import './App.css'
 import { AgentPromptDialog } from './components/AgentPromptDialog'
@@ -31,6 +31,7 @@ import { useSymbolReferences } from './hooks/useSymbolReferences'
 import type { ProjectFile } from './types'
 
 function App() {
+  const [nativeError, setNativeError] = useState('')
   const layout = useAppLayout()
   const sidebar = useSidebarData()
   const symbolIndex = useSymbolIndex({
@@ -38,14 +39,19 @@ function App() {
     refreshToken: sidebar.projectsRefreshToken,
   })
   const agentPrompt = useAgentPrompt()
-  const { settings, handleSettingsChange } = useSettings()
+  const { settings, handleSettingsChange, error: settingsError, ready: settingsReady, saving: settingsSaving, reload: reloadSettings } = useSettings()
   const { saveButtonFeedback, showSaveFeedback } = useSaveFeedback()
 
   const {
+    recoveryError,
+    reportRecoveryError,
+    discardRecovery,
+    startRecoveryTracking,
     documents,
     activeId,
     activeDocument,
     openPaths,
+    getActiveDocument,
     getDocuments,
     getDocument,
     findByPath,
@@ -62,6 +68,7 @@ function App() {
   } = useOpenDocuments()
 
   const excalidraw = useExcalidrawDocument({
+    getActiveDocument,
     isVisible: layout.workspace === 'excalidraw',
     isSidebarCollapsed: layout.isSidebarCollapsed,
     setWorkspace: layout.setWorkspace,
@@ -84,6 +91,7 @@ function App() {
 
   const imageImport = useImageImport({
     excalidrawApi: excalidraw.api,
+    getActiveDocument,
     setWorkspace: layout.setWorkspace,
     setMessage: excalidraw.setMessage,
   })
@@ -118,6 +126,9 @@ function App() {
     setWorkspace: layout.setWorkspace,
     notify,
     refreshRecents: sidebar.refreshRecents,
+    reportRecoveryError,
+    discardRecovery,
+    startRecoveryTracking,
     documents,
     activeId,
     getDocuments,
@@ -181,9 +192,10 @@ function App() {
   })
 
   useNativeEvents({
+    onError: setNativeError,
+    onExitFailure: startRecoveryTracking,
     hasUnsavedDocuments: tabs.hasUnsavedDocuments,
     confirmExit: tabs.confirmExit,
-    openDiagram: tabs.openDiagram,
     openFileFromEvent: tabs.openFileFromEvent,
     importNativeImagePath: imageImport.importNativeImagePath,
     isClientPointInCanvasFrame: imageImport.isClientPointInCanvasFrame,
@@ -213,6 +225,7 @@ function App() {
       className={`app-shell ${layout.isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}
       style={{ '--sidebar-width': `${layout.sidebarWidth}px` } as CSSProperties}
     >
+      {(nativeError || recoveryError || sidebar.error) && <div className="app-alert" role="alert">{[nativeError, recoveryError, sidebar.error].filter(Boolean).join(" ")} {sidebar.error && <button onClick={() => { void sidebar.refreshRecents(); void sidebar.refreshProjects() }}>Retry loading files</button>}{nativeError && <button onClick={() => setNativeError('')}>Dismiss</button>}</div>}
       <Sidebar
         collapsed={layout.isSidebarCollapsed}
         onCollapsedChange={layout.setIsSidebarCollapsed}
@@ -244,6 +257,7 @@ function App() {
             activePath={activePath}
             symbolIndex={symbolIndex}
             onOpenSymbol={references.revealSearchHit}
+            onRescan={sidebar.refreshProjectFiles}
             onAddProject={() => void projectActions.handleAddProject()}
             onRemoveProject={(project) => void sidebar.removeProject(project)}
             onRenameProject={projectActions.handleRenameProject}
@@ -359,6 +373,9 @@ function App() {
       <SettingsDialog
         open={layout.isSettingsOpen}
         settings={settings}
+        error={settingsError}
+        disabled={!settingsReady || settingsSaving}
+        onRetry={!settingsReady ? reloadSettings : undefined}
         onChange={handleSettingsChange}
         onClose={layout.closeSettings}
       />

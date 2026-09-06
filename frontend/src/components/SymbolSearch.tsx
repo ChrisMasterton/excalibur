@@ -39,6 +39,7 @@ export function SymbolSearch({ status, onEnsureIndex, search, activePath, onSele
           value={query}
           placeholder="Find in projects…"
           aria-label="Find in projects"
+          title="Search saved diagrams. Save edits or use Rescan folder to refresh."
           spellCheck={false}
           onFocus={onEnsureIndex}
           onChange={(event) => {

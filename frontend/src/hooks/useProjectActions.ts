@@ -4,7 +4,7 @@ import type { DocumentTabsApi } from './useDocumentTabs'
 import type { ExcalidrawDocumentApi } from './useExcalidrawDocument'
 import type { MermaidDocumentApi } from './useMermaidDocument'
 import type { DocumentPatch } from './useOpenDocuments'
-import { baseName, fileStem, isPathInDirectory } from '../lib/paths'
+import { baseName, isPathInDirectory } from '../lib/paths'
 import { api, errorMessage } from '../lib/tauri'
 import type { DiagramKind, OpenDocument, OpenFileResponse, ProjectItem } from '../types'
 
@@ -82,25 +82,6 @@ export function useProjectActions({
     [activateDocument, findByPath, notify, openLoadedFile],
   )
 
-  /** Keeps open documents pointing at files that were moved or renamed underneath them. */
-  const relocateOpenDocuments = useCallback(
-    (oldPrefix: string, newPrefix: string) => {
-      const relocate = (path: string | null) =>
-        path && (path === oldPrefix || path.startsWith(`${oldPrefix}/`)) ? `${newPrefix}${path.slice(oldPrefix.length)}` : null
-
-      for (const document of getDocuments()) {
-        const nextPath = relocate(document.path)
-        if (!nextPath) {
-          continue
-        }
-        patchDocument(document.id, { path: nextPath, name: fileStem(nextPath) })
-        relocateExcalidrawDocument(document.id, nextPath)
-        relocateMermaidDocument(document.id, nextPath)
-      }
-    },
-    [getDocuments, patchDocument, relocateExcalidrawDocument, relocateMermaidDocument],
-  )
-
   const handleAddProject = useCallback(async () => {
     try {
       const project = await api.addProjectFolder()
@@ -129,7 +110,7 @@ export function useProjectActions({
       await api.renameProjectFileDisplayName(project.path, path, name)
       const openDocument = findByPath(path)
       if (openDocument) {
-        patchDocument(openDocument.id, { title: name })
+        patchDocument(openDocument.id, { displayName: name })
       }
       refreshRecents()
       refreshProjectFiles()
@@ -152,7 +133,9 @@ export function useProjectActions({
     async (path: string, project: ProjectItem) => {
       try {
         const nextPath = await api.moveFileToProject(path, project.path)
-        relocateOpenDocuments(path, nextPath)
+        const document = findByPath(path)
+        if (document?.kind === 'excalidraw') relocateExcalidrawDocument(document.id, nextPath)
+        if (document?.kind === 'mermaid') relocateMermaidDocument(document.id, nextPath)
         notify(`Moved ${baseName(nextPath)} to ${project.name}.`)
         refreshRecents()
         refreshProjectFiles()
@@ -160,7 +143,7 @@ export function useProjectActions({
         notify(errorMessage(error, 'Unable to move file.'))
       }
     },
-    [notify, refreshProjectFiles, refreshRecents, relocateOpenDocuments],
+    [findByPath, notify, refreshProjectFiles, refreshRecents, relocateExcalidrawDocument, relocateMermaidDocument],
   )
 
   const moveFileToNewProject = useCallback(

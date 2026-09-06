@@ -65,6 +65,7 @@ type ProjectsPanelProps = {
   /** The project symbol index behind "Find in project". */
   symbolIndex: SymbolIndexApi
   onOpenSymbol: (hit: SymbolDocumentHit) => void
+  onRescan: () => void
   onAddProject: () => void
   onRemoveProject: (project: ProjectItem) => void
   onRenameProject: (project: ProjectItem, name: string) => Promise<void>
@@ -97,6 +98,7 @@ export function ProjectsPanel({
   activePath,
   symbolIndex,
   onOpenSymbol,
+  onRescan,
   onAddProject,
   onRemoveProject,
   onRenameProject,
@@ -162,7 +164,7 @@ export function ProjectsPanel({
       },
       { label: 'Coding agent prompt…', icon: 'terminal', onSelect: () => onAgentPrompt(project) },
       { label: 'Rename project display name', icon: 'pencil', onSelect: () => setRenaming(project.path) },
-      { label: 'Rescan folder', icon: 'refresh', onSelect: () => void loadFiles(project.path) },
+      { label: 'Rescan folder', icon: 'refresh', onSelect: onRescan },
       { separator: true },
       {
         label: 'Remove from projects',
@@ -275,6 +277,7 @@ export function ProjectsPanel({
 
   return (
     <div className="projects-panel">
+      {symbolIndex.status.errors.length > 0 && <p role="alert">Some saved diagrams could not be indexed. Rescan the folder to retry.</p>}
       <SymbolSearch
         status={symbolIndex.status}
         onEnsureIndex={symbolIndex.ensureIndex}

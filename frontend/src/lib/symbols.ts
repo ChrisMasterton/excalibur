@@ -71,7 +71,7 @@ export function symbolKindHint(kind: SymbolKind, owner?: string) {
 
 /**
  * The key symbols group by: case, spaces, underscores and hyphens are noise, so
- * `USER`, `User`, `user_account` and `UserAccount` all collapse together. Dots
+ * `USER_ACCOUNT`, `user_account` and `UserAccount` all collapse together. Dots
  * survive so `User.name` stays distinct from a class called `Username`.
  */
 export function normalizeSymbol(value: string) {
@@ -155,9 +155,4 @@ export function tokenizeLabel(label: string): LabelToken[] {
     }
   }
   return tokens
-}
-
-/** Case-insensitive substring match on the text the diagram displayed. */
-export function matchesQuery(entry: SymbolEntry, query: string) {
-  return entry.display.toLowerCase().includes(query)
 }

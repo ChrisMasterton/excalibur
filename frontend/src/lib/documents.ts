@@ -41,14 +41,19 @@ export function kindLabel(kind: DiagramKind) {
 
 /** Cheap scene summary for a tab that has not been put on the canvas yet. */
 export function excalidrawSnapshotFromContents(contents: string): ExcalidrawSceneSnapshot {
-  try {
-    const parsed = JSON.parse(contents) as Partial<ExcalidrawData> & { data?: Partial<ExcalidrawData> }
-    const raw = parsed.data && parsed.data.elements ? parsed.data : parsed
-    const elements = (raw.elements ?? []) as Array<{ isDeleted?: boolean }>
-    return { contents, hasContent: elements.some((element) => element.isDeleted !== true) }
-  } catch {
-    return { contents, hasContent: false }
-  }
+  const raw = parseExcalidrawContents(contents)
+  return { contents, hasContent: raw.elements.some(element => !(element as { isDeleted?: boolean }).isDeleted) }
+
+}
+
+export function parseExcalidrawContents(contents: string): ExcalidrawData {
+  let parsed
+  try { parsed = JSON.parse(contents) } catch { throw new Error('Invalid .excalidraw file: unable to parse JSON.') }
+  const raw = parsed?.data ?? parsed
+  if (!raw || !Array.isArray(raw.elements) || raw.elements.some((element: unknown) =>
+    !element || typeof element !== 'object' || typeof (element as { type?: unknown }).type !== 'string'
+  )) throw new Error('Invalid .excalidraw file: expected a scene with an elements array.')
+  return raw as ExcalidrawData
 }
 
 /**
@@ -62,7 +67,7 @@ export function documentInputForFile(kind: DiagramKind, file: OpenFileResponse):
       kind,
       path: file.path,
       name: file.name ? fileStem(file.name) : fileStem(file.path),
-      title: file.display_name,
+      displayName: file.display_name,
       mode: 'view',
       excalidraw: { scene: snapshot, persistedScene: snapshot, saveDirectory: null, viewport: null },
     }
@@ -71,7 +76,8 @@ export function documentInputForFile(kind: DiagramKind, file: OpenFileResponse):
     kind,
     path: file.path,
     name: fileStem(file.path),
-    title: file.display_name || parseMermaidTitle(file.contents),
+    displayName: file.display_name,
+    title: parseMermaidTitle(file.contents),
     diagramType: parseMermaidDiagramType(file.contents),
     mode: 'view',
     mermaid: {

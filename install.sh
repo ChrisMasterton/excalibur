@@ -53,11 +53,10 @@ check_prerequisites() {
     info "Checking prerequisites..."
 
     if ! command -v node &> /dev/null; then
-        error "Node.js is not installed. Please install Node.js 18+ from https://nodejs.org/"
+        error "Node.js is not installed. Please install Node.js 22.12+ from https://nodejs.org/"
     fi
-    NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
-    if [ "$NODE_VERSION" -lt 18 ]; then
-        error "Node.js 18+ is required. Current version: $(node -v)"
+    if ! node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)'; then
+        error "Node.js 22.12+ is required. Current version: $(node -v)"
     fi
     success "Node.js $(node -v) found"
 
@@ -159,7 +158,7 @@ install_app() {
             success "Installed AppImage to $INSTALL_DIR/excalibur"
         elif [ -f "$BINARY_PATH" ]; then
             mkdir -p "$INSTALL_DIR"
-            cp "$BINARY_PATH" "$INSTALL_DIR/"
+            cp "$BINARY_PATH" "$INSTALL_DIR/$APP_NAME"
             chmod +x "$INSTALL_DIR/$APP_NAME"
             success "Installed binary to $INSTALL_DIR/$APP_NAME"
         else

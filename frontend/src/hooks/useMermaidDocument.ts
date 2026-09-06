@@ -19,11 +19,6 @@ import { api, errorMessage } from '../lib/tauri'
 import type { DiagramKind, OpenDocument } from '../types'
 import type { DocumentPatch, MermaidDocumentCache } from './useOpenDocuments'
 
-type MermaidPersistedState = {
-  path: string | null
-  text: string
-}
-
 /** Which nodes of which tab a symbol lookup wants marked. */
 export type MermaidHighlightRequest = {
   documentId: string
@@ -95,14 +90,16 @@ export function useMermaidDocument({
   }, [diagram])
 
   const pathRef = useRef<string | null>(null)
-  const persistedRef = useRef<MermaidPersistedState>({ path: null, text: INITIAL_MERMAID_TEXT })
+  const persistedTextRef = useRef(INITIAL_MERMAID_TEXT)
   const historyRef = useRef(history)
   /** Which tab the editor is currently holding. */
   const liveIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     historyRef.current = history
-  }, [history])
+    const id = liveIdRef.current
+    if (id) writeCache(id, { history, persistedText: persistedTextRef.current, viewport: viewportRef.current?.getTransform() ?? null })
+  }, [history, writeCache])
 
   const setDocument = useCallback(
     (nextPath: string | null, nextName: string) => {
@@ -122,17 +119,9 @@ export function useMermaidDocument({
     [patchDocument],
   )
 
-  const setPersistedState = useCallback(
-    (nextText: string, nextPath: string | null) => {
-      persistedRef.current = { text: nextText, path: nextPath }
-      markDirty(false)
-    },
-    [markDirty],
-  )
-
   const updateDirtyState = useCallback(
     (nextText: string) => {
-      markDirty(nextText !== persistedRef.current.text)
+      markDirty(nextText !== persistedTextRef.current)
     },
     [markDirty],
   )
@@ -180,7 +169,7 @@ export function useMermaidDocument({
     if (liveId) {
       writeCache(liveId, {
         history: historyRef.current,
-        persistedText: persistedRef.current.text,
+        persistedText: persistedTextRef.current,
         // The viewport is one component shared by every tab, so each tab keeps its own copy.
         viewport: viewportRef.current?.getTransform() ?? null,
       })
@@ -209,7 +198,7 @@ export function useMermaidDocument({
       setHighlight(null)
       historyRef.current = cache.history
       dispatch({ type: 'restore', state: cache.history })
-      persistedRef.current = { path: document.path, text: cache.persistedText }
+      persistedTextRef.current = cache.persistedText
       setDocument(document.path, document.name)
       markDirty(cache.history.text !== cache.persistedText)
       setMessage(nextMessage)
@@ -224,23 +213,16 @@ export function useMermaidDocument({
     }
   }, [])
 
-  /** Clears the editor's live state because its tab is being closed. */
-  const detachDocument = useCallback((document: OpenDocument) => {
-    if (document.id === liveIdRef.current) {
-      liveIdRef.current = null
-    }
-  }, [])
-
   /** Follows a live document whose file was renamed or moved underneath it. */
   const relocateDocument = useCallback(
     (id: string, nextPath: string) => {
+      patchDocument(id, { path: nextPath, name: fileStem(nextPath) })
       if (id !== liveIdRef.current) {
         return
       }
       setDocument(nextPath, fileStem(nextPath))
-      persistedRef.current = { ...persistedRef.current, path: nextPath }
     },
-    [setDocument],
+    [patchDocument, setDocument],
   )
 
   const getLiveId = useCallback(() => liveIdRef.current, [])
@@ -297,6 +279,8 @@ export function useMermaidDocument({
   )
 
   const handleSave = useCallback(async () => {
+    const documentId = liveIdRef.current
+    if (!documentId) return
     const nextName = name.trim()
     try {
       const response = await api.saveMermaidFile({
@@ -304,10 +288,20 @@ export function useMermaidDocument({
         name: nextName || undefined,
         contents: text,
       })
-      setDocument(response.path, fileStem(response.path))
-      setPersistedState(text, response.path)
-      setMessage(`Saved ${baseName(response.path)}.`)
-      showSaveFeedback('mermaid')
+      // Completion belongs to the tab and source captured before the native call.
+      captureIntoCache()
+      const cache = readCache(documentId)
+      if (cache) {
+        writeCache(documentId, { ...cache, persistedText: text })
+        patchDocument(documentId, { dirty: cache.history.text !== text })
+        relocateDocument(documentId, response.path)
+        if (liveIdRef.current === documentId) {
+          persistedTextRef.current = text
+          updateDirtyState(historyRef.current.text)
+          setMessage(`Saved ${baseName(response.path)}.`)
+          showSaveFeedback('mermaid')
+        }
+      }
       refreshRecents()
       refreshProjectFiles()
     } catch (error_) {
@@ -315,10 +309,12 @@ export function useMermaidDocument({
         setMessage(errorMessage(error_, 'Unable to save Mermaid file.'))
       }
     }
-  }, [name, path, refreshProjectFiles, refreshRecents, setDocument, setPersistedState, showSaveFeedback, text])
+  }, [captureIntoCache, name, patchDocument, path, readCache, refreshProjectFiles, refreshRecents, relocateDocument, showSaveFeedback, text, updateDirtyState, writeCache])
 
   const handleRename = useCallback(
     async (nextName: string) => {
+      const documentId = liveIdRef.current
+      if (!documentId) return
       const currentPath = pathRef.current
       if (!currentPath) {
         setDocument(null, nextName)
@@ -326,9 +322,8 @@ export function useMermaidDocument({
       }
       try {
         const nextPath = await api.renameFile(currentPath, nextName)
-        setDocument(nextPath, fileStem(nextPath))
-        persistedRef.current = { ...persistedRef.current, path: nextPath }
-        setMessage(`Renamed to ${baseName(nextPath)}.`)
+        relocateDocument(documentId, nextPath)
+        if (liveIdRef.current === documentId) setMessage(`Renamed to ${baseName(nextPath)}.`)
         refreshRecents()
         refreshProjectFiles()
       } catch (error_) {
@@ -336,7 +331,7 @@ export function useMermaidDocument({
         throw error_
       }
     },
-    [refreshProjectFiles, refreshRecents, setDocument],
+    [refreshProjectFiles, refreshRecents, relocateDocument, setDocument],
   )
 
   const highlightTokenRef = useRef(0)
@@ -460,7 +455,6 @@ export function useMermaidDocument({
     captureIntoCache,
     loadDocument,
     releaseDocument,
-    detachDocument,
     relocateDocument,
     prepareConversion,
     handleTextChange,

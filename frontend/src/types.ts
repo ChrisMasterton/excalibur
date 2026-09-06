@@ -28,6 +28,8 @@ export type OpenDocument = {
   path: string | null
   /** File stem, or the name the next save will suggest. */
   name: string
+  /** Project metadata label; takes precedence over the file's own title. */
+  displayName?: string | null
   /** Display title carried inside the file (Mermaid frontmatter `title:`). */
   title?: string | null
   /** Normalized Mermaid diagram type, tracked live as the source changes. */

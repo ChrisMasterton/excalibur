@@ -8,7 +8,6 @@ export type MermaidHistoryAction =
   | { type: 'set'; text: string }
   | { type: 'undo' }
   | { type: 'redo' }
-  | { type: 'reset'; text: string }
   | { type: 'restore'; state: MermaidHistoryState }
 
 export const INITIAL_MERMAID_TEXT =
@@ -33,8 +32,6 @@ export function mermaidHistoryReducer(
       const next = state.future[0]
       return { text: next, past: [...state.past, state.text], future: state.future.slice(1) }
     }
-    case 'reset':
-      return { text: action.text, past: [], future: [] }
     case 'restore':
       return action.state
     default:
