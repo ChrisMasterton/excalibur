@@ -1,110 +1,40 @@
-# Excalibur app-wide review
+# Excalibur app-wide review and fixes
 
-Reviewed 2026-09-05 against commit `42767d9` and the working tree, including the earlier sidebar cleanup. This is a source review across the app with focused runtime verification, not a claim that every native/platform workflow was exercised.
+Reviewed the app against `42767d9`, then implemented the remaining findings at the user's request. The checkout now includes `0034794` plus the final working-tree cleanup. This is an app-wide source review with targeted runtime verification, not a claim that every platform workflow has been exercised.
 
-## Verdict
+## Outcome
 
-The product has a coherent purpose: read and edit diagrams stored in ordinary files, organize them by folder, and follow concepts across related diagrams. No major feature is clearly disposable. The significant weakness is document ownership and persistence, rather than feature count.
+All seven categories of findings from the review have been addressed. The product's core features still earn their place: file-based diagrams, two editor formats, projects with portable labels, tabs, symbol navigation, a visual board, and the CLI. No major feature deletion was justified.
 
-The small, reproducible fixes below are implemented. The remaining findings are open; this review is not a release-readiness sign-off.
+The earlier fixes for cross-tab save/rename completion, retaining edits made during a save, and keeping project labels separate from Mermaid titles remain covered by regression tests. Redundant editor branches, duplicated native file-loading code, unused exports, misleading prompt/settings copy, and the directory-prefix relocation path were removed or simplified.
 
-## Changes made
+## Remaining findings resolved
 
-| Finding | Change | Evidence |
+| Original finding | Implemented fix | Verification |
 | --- | --- | --- |
-| Save and rename completion updated whichever tab was live, rather than the tab that started the operation. | Capture document identity before awaiting the native response. Update that document and its cache; update the live editor only when it still holds that document. | Delayed-save and delayed-rename browser scenarios reproduced incorrect target paths in both editors; regression checks now pass. |
-| Save completion marked newer, unsaved edits clean. Excalidraw also replaced its cached scene with the older saved snapshot. | Advance only the saved baseline. Compare it with the current contents and retain later edits and the close confirmation. | Tests edit Mermaid text and draw an Excalidraw shape while saving, then verify closing still prompts. |
-| Mermaid frontmatter could replace a user-chosen project display label. | Store the project label separately from the source title. Resolve tab labels as project label, then source title, then filename. | A file with both labels retains its project label through edits and tab switches. |
-| Several branches no longer had callers. | Delete Excalidraw's unused `clean`/`keep` baseline modes, duplicated persisted-path fields, Mermaid's duplicate detach function and unused history reset action, unused symbol exports, and an unused settings-path prop. | Call-site inspection, TypeScript build, lint, existing regression suite. |
-| Four native opening routes duplicated read/metadata/recent-list behavior. Text and PNG writes also had identical wrappers. | Use one native file-loading helper and one byte-compatible write helper. Remove verbose per-read success tracing. | Rust compilation/tests; frontend command contracts remain unchanged. Native dialogs were not driven. |
-| File relocation still supported directory-prefix rewriting although project renaming now changes metadata and the only caller moves a single file. | Delete prefix relocation and update the matching document through its owning editor. | Call-site trace; existing project/tab tests pass. |
-| Generated prompts claimed project folders were watched. Settings copy implied live synchronization between windows. | Describe the actual manual rescan and per-window settings behavior. No watcher or synchronization service added. | Source trace and prompt/browser tests. |
+| Recovery protected only one Excalidraw scene and no Mermaid source. | Store unsaved contents and saved baselines per document for both formats. Restore active/inactive and untitled documents on startup, including an intentionally empty scene. Save removes the matching saved recovery; closing with discard or confirming exit without saving removes recovery. Storage failures show an actionable alert. Recovery does not store Mermaid undo history. | Browser reload retains two independently edited Mermaid tabs and an empty Excalidraw scene. Close/exit tests verify discard versus cancellation. Quota failure leaves the editor usable and shows an alert. |
+| Image imports and text refitting could complete against another live canvas or in viewing mode. | Capture the originating document before asynchronous work, verify it is still the editable active document at completion, and cancel when ownership changes. Refit also checks that its element array is still current. | Browser tests delay actual file decoding/font completion while changing tabs; image tests also check the saved drawing contains no imported image. Viewing-mode drops are refused. Existing successful image-import/conversion tests pass. |
+| A three-second empty-scene exception could lose deliberate deletion; malformed drawing files activated before validation. | Delete the timer and its branches. Ignore scene changes only during synchronous replacement or when a callback's element array is obsolete. Validate drawing JSON before creating/activating a tab. | Invalid JSON leaves the original tab active. Immediate deletion can be saved; an unsaved empty scene survives switching and reload. Existing per-tab canvas/preview viewport tests pass. |
+| Storage failures looked successful; direct writes could truncate files; a failed cross-project metadata move did not restore the destination. | Return storage errors instead of defaulting to empty data or the working directory. Replace files through a synced temporary file in the same directory, preserving existing permissions and symlink targets; sync the parent directory on Unix. Restore destination metadata bytes or remove newly created metadata if the source metadata write fails. Report ancillary Recent-update failures separately from a completed file operation. Settings apply only after a successful save. | Real filesystem tests cover corrupt/missing/unreadable storage, failed replacement, temporary-file cleanup, read-only files, symlinks/permissions, and rollback of existing/new destination metadata. Browser tests cover failed settings writes and visible storage errors. |
+| Search could reuse stale timestamps and cache failed reads as empty results; Rescan refreshed only the file list. | Delete the per-file timestamp cache. The existing lazy index refreshes on writes and explicit rescan, rereads saved contents, and reports failed files. Both the sidebar and index receive the same refresh. Search explains that it uses saved diagrams. | Same-timestamp content changes appear after rescan. An injected file-read failure is reported and succeeds on retry without a timestamp change. Existing symbol-search/reference/board tests pass. |
+| Modal dialogs allowed background shortcuts and focus escape. | Use a shared native-dialog lifecycle for Settings, the agent prompt, and the board, with focus wrapping, inert background, Escape, and outside-click dismissal. Remove duplicate backdrop elements/styles. App shortcuts defer while a native modal is open. | Browser keyboard tests keep focus in Settings and block document close. Existing agent typing/copy, board selection/Escape, and settings tests pass. |
+| Installer prerequisites were too old, Linux fallback named its binary incorrectly, and native input handling skipped dotted folders/additional files. | Require Node 22.12+ in both installers and README. Copy the Linux binary to the same path that is chmodded. Classify dropped paths through filesystem metadata; handle every dropped/startup path. Queue native file requests until frontend readiness. | Shell syntax and Node boundary checks pass. The Linux copy/chmod branch runs successfully in a temporary directory. Rust tests classify dotted folders and test native request queuing. Browser bridge tests handle multiple startup files and a mixed dotted-folder/multiple-diagram drop. |
 
-The combined working-tree change removes 165 net production lines, including the earlier sidebar cleanup, before counting tests and this report.
+## Verification
 
-Regression coverage: [document-ownership.spec.ts](/Users/chris/Projects/excalibur/frontend/tests/document-ownership.spec.ts).
+- Frontend build and lint passed; `git diff --check` passed.
+- **70 Playwright tests passed**, including 16 new follow-up scenarios and the seven earlier ownership/label scenarios. These use real React, Mermaid, Excalidraw, browser rendering and interactions; native Tauri dialogs/filesystem commands are mocked.
+- **12 Rust tests passed**, including six new tests exercising filesystem behavior and native request queuing.
+- Installer shell syntax, Node version boundaries, and the real Linux fallback copy/chmod branch passed.
+- The earlier review's real Chromium CLI rendering and malformed-input checks also passed; the CLI was unchanged during this follow-up.
 
-## Remaining findings, ordered by consequence
+Regression coverage: [review-fixes.spec.ts](/Users/chris/Projects/excalibur/frontend/tests/review-fixes.spec.ts), [document-ownership.spec.ts](/Users/chris/Projects/excalibur/frontend/tests/document-ownership.spec.ts), and the persistence tests in [main.rs](/Users/chris/Projects/excalibur/src-tauri/src/main.rs).
 
-### 1. Recovery is not crash recovery for all open documents — high priority
+## Practical limits
 
-Only one live Excalidraw scene is written to the current autosave slot. Startup loads the separate recovery slot for the recovery action, while normal scene loading replaces or clears the current slot. Inactive tabs' contents remain in memory, and Mermaid has no equivalent content backup. Session restoration persists paths only.
-
-This means the current backup UI must not be treated as protection for all unsaved work after a crash. The smallest coherent design is recovery owned by document identity for both formats, with explicit retention/discard rules. Do not grow the current two global slots with more special cases.
-
-Evidence: [autosave initialization](/Users/chris/Projects/excalibur/frontend/src/hooks/useExcalidrawDocument.ts:116), [current-slot writes](/Users/chris/Projects/excalibur/frontend/src/hooks/useExcalidrawDocument.ts:208), [session storage](/Users/chris/Projects/excalibur/frontend/src/hooks/useOpenDocuments.ts:85). Source-confirmed; crash/relaunch failure injection was not performed.
-
-### 2. Other asynchronous canvas mutations still rely on the live editor — high priority
-
-Image import awaits file/image decoding, and text refitting awaits fonts, before mutating the shared canvas. Neither operation verifies that the canvas still holds the original document. The custom image-import path also does not check the tab's viewing/editing mode before calling `updateScene`.
-
-The save/rename fixes do not cover these operations. They need document-scoped completion or an explicit cancellation when the target changes. A generic background-job framework is unnecessary.
-
-Evidence: [image import](/Users/chris/Projects/excalibur/frontend/src/hooks/useImageImport.ts:62), [text refit](/Users/chris/Projects/excalibur/frontend/src/hooks/useExcalidrawDocument.ts:638). Source-confirmed ownership gap; delayed decoding/font and read-only-drop scenarios were not reproduced in this pass.
-
-### 3. Excalidraw loading uses a time-based suppression rule — high priority
-
-For three seconds after loading a nonempty scene, empty changes are discarded as presumed transient renderer events. The check has no provenance to distinguish a renderer event from the user deliberately deleting the last element. Invalid JSON is also caught inside canvas application after tab activation, leaving the previous canvas available rather than rejecting the document before activation.
-
-The right simplification is a validated load boundary and a defined scene-application lifecycle, which should make the three-second exception removable. Deleting the guard without reproducing its original purpose could reintroduce scene loss.
-
-Evidence: [scene application](/Users/chris/Projects/excalibur/frontend/src/hooks/useExcalidrawDocument.ts:244), [empty-change suppression](/Users/chris/Projects/excalibur/frontend/src/hooks/useExcalidrawDocument.ts:338), [file input preparation](/Users/chris/Projects/excalibur/frontend/src/lib/documents.ts:43). Source-confirmed branches; deletion-timing and malformed-file journeys remain unverified.
-
-### 4. Persistence can fail without an actionable result — high priority
-
-Project-list and recent-list saves discard filesystem errors. Settings writes reject in Rust but the UI catches them only in the console after applying the value. Loading malformed project-list JSON returns an empty list, which a later write can replace. The app-data directory falls back to the working directory on resolution failure.
-
-Diagram, settings, and metadata writes use direct `fs::write`. Cross-project metadata relocation writes two metadata files sequentially; its failure rollback moves the diagram back but does not restore a destination metadata file already written.
-
-Simplification direction: make persistence functions return their real result and remove success-shaped defaults from write-related paths. Durable replacement and metadata rollback need filesystem failure tests; they were not folded into a cosmetic refactor.
-
-Evidence: [recents persistence](/Users/chris/Projects/excalibur/src-tauri/src/main.rs:116), [project persistence](/Users/chris/Projects/excalibur/src-tauri/src/main.rs:185), [metadata relocation](/Users/chris/Projects/excalibur/src-tauri/src/main.rs:383), [file writes](/Users/chris/Projects/excalibur/src-tauri/src/main.rs:620), [settings UI](/Users/chris/Projects/excalibur/frontend/src/hooks/useSettings.ts:16). Source-confirmed; disk-full, permission, corruption, and rollback failure tests were not run.
-
-### 5. Project search can report stale or incomplete results — medium priority
-
-The index cache identifies files by second-resolution modification time and labels. Two content changes within that timestamp can reuse old symbols. A failed read is cached as an empty result under the same signature. The project menu's Rescan folder reloads the sidebar listing without invalidating the symbol index. Indexing reads saved files, whereas board thumbnails can read unsaved tab contents.
-
-Keep the useful cache, but give explicit rescans one shared invalidation path; do not cache read failure as successful emptiness. Distinguish disk-index results from live document contents.
-
-Evidence: [index cache](/Users/chris/Projects/excalibur/frontend/src/hooks/useSymbolIndex.ts:56), [rescan action](/Users/chris/Projects/excalibur/frontend/src/components/ProjectsPanel.tsx:165), [file timestamp](/Users/chris/Projects/excalibur/src-tauri/src/main.rs:562). Source-confirmed; same-timestamp and failed-read recovery scenarios were not injected.
-
-### 6. Dialogs do not fully own keyboard interaction — medium priority
-
-Settings, prompt, and board overlays declare themselves modal but do not trap focus or make the background inert. App shortcuts listen in capture phase, so a dialog's Escape handler does not prevent the app's highlight/panel handling from also running. This can also leave tab-closing shortcuts active behind dialogs.
-
-Use a single modal boundary for focus and shortcut routing rather than more independent Escape listeners.
-
-Evidence: [global keyboard handler](/Users/chris/Projects/excalibur/frontend/src/hooks/useKeyboardShortcuts.ts:38), [settings dialog](/Users/chris/Projects/excalibur/frontend/src/components/SettingsDialog.tsx:35), [prompt dialog](/Users/chris/Projects/excalibur/frontend/src/components/AgentPromptDialog.tsx:152), [board dialog](/Users/chris/Projects/excalibur/frontend/src/components/SymbolBoard.tsx:109). Source-confirmed; full keyboard/accessibility audit was not performed.
-
-### 7. Platform/setup claims need narrower proof — medium priority
-
-The installers and README accept Node 18, but the installed Vite package declares `^20.19.0 || >=22.12.0`. The Linux bare-binary fallback copies `excalibur-tauri` into the install directory and then tries to chmod a file named `excalibur`. Folder-drop detection assumes a folder has no extension, so a directory with a dot is skipped. Startup/runtime file-event code takes only the first file.
-
-These are concrete setup/input limitations. They do not justify adding platform automation; first align prerequisite checks and path handling, then exercise the relevant native platforms.
-
-Evidence: [install.sh](/Users/chris/Projects/excalibur/install.sh), [install.ps1](/Users/chris/Projects/excalibur/install.ps1), [native drop handling](/Users/chris/Projects/excalibur/frontend/src/hooks/useNativeEvents.ts:121), [native entry point](/Users/chris/Projects/excalibur/src-tauri/src/main.rs:1136). Installed dependency manifest checked locally. Linux/Windows installation and OS file events were not exercised.
-
-## What earns its place
-
-| Area reviewed | Decision |
-| --- | --- |
-| Two always-mounted editors and per-tab caches | Keep. They serve different formats and preserve expensive editor state. Their ownership rules need tightening; merging their engines would obscure their real differences. |
-| Projects, portable display metadata, nested file tree | Keep. Plain folders and labels without physical renames are core requirements. |
-| Recents and blank-tab reuse | Keep. These reduce navigation work and unwanted empty tabs. |
-| Editing/viewing mode | Keep. Reading architecture diagrams should not accidentally edit them. Enforce the boundary consistently. |
-| Symbol search and references | Keep. They are distinct entry points into one shared index and already reuse result rendering. |
-| Symbol board and bounded thumbnail cache | Keep. The board provides visual comparison; the cache avoids repeated expensive rendering. Its failure presentation and freshness need attention. |
-| Mermaid conversion, text measurement, PNG export | Keep. They cross genuinely different representations. Existing conversion and rendered-output tests justify the integration code. |
-| Coding-agent prompt | Keep. Deterministic text generation is sufficient; remove unsupported claims instead of adding an agent runner. |
-| Settings | Keep the small current set. No new settings framework or live synchronization service is warranted by this review. |
-| CLI | Keep. It is an independent file-conversion workflow with useful failure diagnostics; real Chromium rendering passed. |
-
-## Verification and limits
-
-- Frontend build and lint passed. Vite still reports large bundle chunks; no speculative bundle optimization was added.
-- Full Playwright suite: **54 passed**, including seven new document-ownership/label scenarios. Browser tests exercise real React, Mermaid, Excalidraw, rendering, and interactions; the Tauri filesystem/dialog bridge is mocked.
-- Rust: **6 passed**, including real temporary-file project-metadata preservation. These do not cover every native command or failure branch.
-- Real CLI check: rendered Markdown to a sidecar SVG, preserved surrounding prose, emitted JSON diagnostics for malformed Mermaid, and left an existing output file unchanged on parse failure.
-- Earlier sidebar check verified pointer limits, keyboard resize, persistence, and reset.
-- No native desktop launch/dialog test, crash recovery experiment, Linux/Windows run, failure-injected filesystem suite, or independent-agent review was performed.
-- Changes remain local and uncommitted. No deployment or external tracker changes were made.
+- Browser reload verifies restoration from persisted content. Native process termination, power failure, and operating-system storage durability were not directly exercised.
+- Native file dialogs and full Linux/Windows installation were not run. PowerShell is unavailable on this host; its prerequisite check was reviewed in source. The Rust tests ran on macOS.
+- Temporary replacement and handled-error rollback are implemented; cross-project moves are not an atomic multi-file transaction across a machine crash.
+- Recovery depends on browser storage capacity. Failed writes are visible; saving documents to files remains the durable user-controlled path. The old explicit Excalidraw backup action remains compatible.
+- Vite still reports large bundle chunks. No speculative bundling optimization or new automation was added.
+- Final cleanup remains uncommitted. No deployment or push was performed by this task.

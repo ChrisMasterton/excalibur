@@ -166,18 +166,6 @@
 
 /* Settings dialog ----------------------------------------------------------- */
 
-.settings-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  background: rgba(13, 15, 18, 0.35);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  animation: status-fade-in var(--motion-fast) var(--ease-out);
-}
-
 .settings-dialog {
   width: min(560px, 100%);
   max-height: calc(100vh - 48px);
@@ -1519,16 +1507,6 @@
 /* Board ---------------------------------------------------------------------
    Every document that mentions the active symbol, side by side. It sits over the
    workspace only, so the sidebar stays where it was. */
-
-.board-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 30;
-  background: rgba(13, 15, 18, 0.35);
-  display: flex;
-  padding: 16px;
-  animation: status-fade-in var(--motion-fast) var(--ease-out);
-}
 
 .board {
   flex: 1;

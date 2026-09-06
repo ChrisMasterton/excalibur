@@ -49,7 +49,6 @@ export function SettingsDialog({ open, settings, error, disabled, onRetry, onCha
   }
 
   return createPortal(
-    <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <dialog ref={panelRef} className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className="settings-header">
           <div>
@@ -140,8 +139,7 @@ export function SettingsDialog({ open, settings, error, disabled, onRetry, onCha
             Done
           </button>
         </footer>
-      </dialog>
-    </div>,
+      </dialog>,
     document.body,
   )
 }

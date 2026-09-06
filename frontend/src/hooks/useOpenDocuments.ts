@@ -140,7 +140,11 @@ export function useOpenDocuments() {
           : excalidraw && (excalidraw.persistedScene
             ? excalidraw.scene?.contents !== excalidraw.persistedScene.contents
             : excalidraw.scene?.hasContent)
-        if (dirty) entries.push({ ...document, dirty: true, excalidraw, mermaid })
+        if (dirty) entries.push({
+          ...document, dirty: true, excalidraw,
+          // Recovery needs the latest source, not a hundred copies of its undo history.
+          mermaid: mermaid ? { ...mermaid, history: { text: mermaid.history.text, past: [], future: [] } } : undefined,
+        })
       }
       window.localStorage.setItem(RECOVERY_DOCUMENTS_KEY, JSON.stringify(entries))
       setRecoveryError('')

@@ -200,10 +200,6 @@ function AgentPromptPanel({
   }
 
   return createPortal(
-    <div
-      className="settings-backdrop"
-      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
-    >
       <dialog
         ref={panelRef}
         className="settings-dialog agent-prompt-dialog"
@@ -292,8 +288,7 @@ function AgentPromptPanel({
             onClick={copy}
           />
         </footer>
-      </dialog>
-    </div>,
+      </dialog>,
     document.body,
   )
 }

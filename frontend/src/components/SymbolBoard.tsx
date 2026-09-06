@@ -93,10 +93,6 @@ export function SymbolBoard({
   }
 
   return (
-    <div
-      className="board-backdrop"
-      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
-    >
       <dialog ref={panelRef} className="board" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className="board-header">
           <div className="board-titles">
@@ -121,6 +117,5 @@ export function SymbolBoard({
           ))}
         </div>
       </dialog>
-    </div>
   )
 }

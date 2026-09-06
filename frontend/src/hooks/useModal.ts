@@ -19,9 +19,20 @@ export function useModal(open: boolean, onClose: () => void) {
         controls[event.shiftKey ? controls.length - 1 : 0].focus()
       }
     }
+    const backdropClick = (event: MouseEvent) => {
+      if (event.target !== dialog) return
+      const rect = dialog.getBoundingClientRect()
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose()
+    }
+    dialog.addEventListener('mousedown', backdropClick)
     dialog.addEventListener('keydown', keydown)
     dialog.addEventListener('cancel', cancel)
-    return () => { dialog.removeEventListener('keydown', keydown); dialog.removeEventListener('cancel', cancel); dialog.close() }
+    return () => {
+      dialog.removeEventListener('mousedown', backdropClick)
+      dialog.removeEventListener('keydown', keydown)
+      dialog.removeEventListener('cancel', cancel)
+      dialog.close()
+    }
   }, [open, onClose])
   return ref
 }
