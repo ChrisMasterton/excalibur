@@ -22,6 +22,8 @@ declare global {
     __PLAYWRIGHT_TAURI_SEED__?: MockSeed
     __PLAYWRIGHT_EMIT_TAURI_EVENT__?: (eventName: string, payload?: unknown) => Promise<void>
     __PLAYWRIGHT_SET_CONFIRM_RESULT__?: (result: boolean) => void
+    __PLAYWRIGHT_HOLD_COMMAND__?: (command: string) => void
+    __PLAYWRIGHT_RELEASE_COMMAND__?: (error?: string) => void
   }
 }
 
@@ -49,6 +51,17 @@ export async function installTauriMock(page: Page) {
     let callbackId = 0
     let listenerId = 0
     let confirmResult = true
+    let heldCommand = null
+    window.__PLAYWRIGHT_HOLD_COMMAND__ = (command) => {
+      const promise = new Promise((resolve, reject) => {
+        window.__PLAYWRIGHT_RELEASE_COMMAND__ = (error) => {
+          heldCommand = null
+          if (error) reject(new Error(error))
+          else resolve()
+        }
+      })
+      heldCommand = { command, promise }
+    }
 
     const getExcalidrawFileName = (name) => {
       const trimmed = typeof name === 'string' ? name.trim() : ''
@@ -146,6 +159,9 @@ export async function installTauriMock(page: Page) {
         const loggedArgs = { ...(args ?? {}) }
         delete loggedArgs.request
         invocations.push({ cmd, args: loggedArgs })
+        if (heldCommand?.command === cmd) {
+          await heldCommand.promise
+        }
 
         switch (cmd) {
           case 'list_recents':
@@ -252,7 +268,7 @@ export async function installTauriMock(page: Page) {
             const directory = oldPath.slice(0, oldPath.lastIndexOf('/'))
             const ext = oldPath.slice(oldPath.lastIndexOf('.'))
             const nextPath = `${directory}/${args.name}${ext}`
-            savedFiles[nextPath] = savedFiles[oldPath]
+            savedFiles[nextPath] = readFile(oldPath)
             delete savedFiles[oldPath]
             return nextPath
           }

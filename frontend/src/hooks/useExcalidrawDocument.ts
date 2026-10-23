@@ -288,13 +288,10 @@ export function useExcalidrawDocument({
         persistedRef.current = persistedScene
         updateDirtyState(snapshot)
         setMessage(nextMessage)
-        if (fitToContent) {
-          pendingFitToContentRef.current = true
-          pendingViewportRef.current = null
-        } else if (viewport && !isVisibleRef.current) {
-          // A hidden canvas measures 0x0; re-apply once this tab is on screen.
-          pendingViewportRef.current = viewport
-        }
+        // A restored tab's viewport replaces any fit queued by an earlier load.
+        pendingFitToContentRef.current = Boolean(fitToContent)
+        // A hidden canvas measures 0x0; re-apply once this tab is on screen.
+        pendingViewportRef.current = !fitToContent && viewport && !isVisibleRef.current ? viewport : null
         setWorkspace('excalidraw')
       } catch (error) {
         console.error('[excalibur] applyExcalidrawContents: FAILED', error)
@@ -565,20 +562,21 @@ export function useExcalidrawDocument({
       const cache = readCache(documentId)
       if (cache) {
         writeCache(documentId, { ...cache, persistedScene: snapshot, saveDirectory: null })
-        patchDocument(documentId, { dirty: cache.scene?.contents !== serialized })
+        const stillDirty = cache.scene?.contents !== serialized
+        patchDocument(documentId, { dirty: stillDirty })
         relocateDocument(documentId, response.path)
         if (liveIdRef.current === documentId) {
           saveDirectoryRef.current = null
           persistedRef.current = snapshot
           updateDirtyState(sceneSnapshotRef.current)
-          setMessage(`Saved ${baseName(response.path)}.`)
-          showSaveFeedback('excalidraw')
+          setMessage(`Saved ${baseName(response.path)}.${stillDirty ? ' Newer changes remain unsaved.' : ''}`)
+          if (!stillDirty) showSaveFeedback('excalidraw')
         }
       }
       refreshRecents()
       refreshProjectFiles()
     } catch (error) {
-      if (errorMessage(error, '') !== 'Save cancelled') {
+      if (liveIdRef.current === documentId && errorMessage(error, '') !== 'Save cancelled') {
         console.error('[excalibur] save_excalidraw_file failed', error)
         setMessage(errorMessage(error, 'Unable to save drawing.'))
       }
@@ -668,7 +666,7 @@ export function useExcalidrawDocument({
         refreshRecents()
         refreshProjectFiles()
       } catch (error) {
-        setMessage(errorMessage(error, 'Unable to rename file.'))
+        if (liveIdRef.current === documentId) setMessage(errorMessage(error, 'Unable to rename file.'))
         throw error
       }
     },

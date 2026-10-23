@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { getMockState, installTauriMock, seedBackend } from './support'
+import { enterEditMode, getMockState, installTauriMock, openProjectFile, seedBackend } from './support'
 
 const DIAGRAMS_PATH = '/mock/fsm-nextjs/docs/diagrams'
 
@@ -103,6 +103,33 @@ test('renders diagrams beneath their project-relative subfolders', async ({ page
   await expect(access.locator('.project-subfolder', { hasText: 'access' })).toBeVisible()
   await expect(access.locator('.file-row-main[title$="/identity/access/roles.mmd"]')).toContainText('Account roles')
   await expect(page.locator('.project-tree > .file-row .file-row-name')).toHaveText('overview.excalidraw')
+})
+
+test('keeps the project display name when the Mermaid source title changes', async ({ page }) => {
+  const path = `${DIAGRAMS_PATH}/auth.mmd`
+  await seedBackend(page, {
+    files: { [path]: '---\ntitle: Internal title\n---\nflowchart TD\n  A --> B' },
+    projects: [{ path: DIAGRAMS_PATH, name: 'Architecture', added_at: 1 }],
+    projectFiles: { [DIAGRAMS_PATH]: [{
+      kind: 'mermaid', path, name: 'auth.mmd', relative_path: 'auth.mmd', updated_at: 1,
+      title: 'Internal title', display_name: 'Account flow',
+    }] },
+  })
+  await page.goto('/')
+  await openProjectFile(page, 'Architecture', path)
+  await expect(page.getByTestId('mermaid-subtitle')).toHaveText('Internal title')
+  const tab = page.locator(`.document-tab-main[title="${path}"]`)
+  await expect(tab).toHaveText('Account flow')
+  await enterEditMode(page)
+  await page.getByRole('textbox', { name: 'Mermaid source' }).fill('---\ntitle: Revised source title\n---\nflowchart LR\n  B --> C')
+  await expect(page.getByTestId('mermaid-subtitle')).toHaveText('Revised source title')
+  await expect(tab).toHaveText('Account flow')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect.poll(async () => (await getMockState(page)).savedFiles[path]).toContain('Revised source title')
+  await page.getByRole('button', { name: 'Close Account flow', exact: true }).click()
+  await openProjectFile(page, 'Architecture', path)
+  await expect(tab).toHaveText('Account flow')
+  await expect(page.getByTestId('mermaid-subtitle')).toHaveText('Revised source title')
 })
 
 test('closes only tabs belonging to the selected project, including subfolders', async ({ page }) => {

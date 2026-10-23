@@ -143,6 +143,9 @@ test('each Mermaid tab keeps its own preview zoom and pan', async ({ page }) => 
 test('each Excalidraw tab keeps its own canvas zoom and scroll', async ({ page }) => {
   await seedBackend(page, SEED)
   await page.goto('/')
+  // Open after the canvas has mounted, so startup cannot consume a later tab's queued fit.
+  await expect(page.getByRole('button', { name: 'New drawing', exact: true })).toBeEnabled()
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
 
   await openProjectFile(page, '/mock/views/first.excalidraw')
   const zoom = page.locator('.canvas-frame .reset-zoom-button')

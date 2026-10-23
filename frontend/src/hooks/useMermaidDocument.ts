@@ -293,19 +293,20 @@ export function useMermaidDocument({
       const cache = readCache(documentId)
       if (cache) {
         writeCache(documentId, { ...cache, persistedText: text })
-        patchDocument(documentId, { dirty: cache.history.text !== text })
+        const stillDirty = cache.history.text !== text
+        patchDocument(documentId, { dirty: stillDirty })
         relocateDocument(documentId, response.path)
         if (liveIdRef.current === documentId) {
           persistedTextRef.current = text
           updateDirtyState(historyRef.current.text)
-          setMessage(`Saved ${baseName(response.path)}.`)
-          showSaveFeedback('mermaid')
+          setMessage(`Saved ${baseName(response.path)}.${stillDirty ? ' Newer changes remain unsaved.' : ''}`)
+          if (!stillDirty) showSaveFeedback('mermaid')
         }
       }
       refreshRecents()
       refreshProjectFiles()
     } catch (error_) {
-      if (errorMessage(error_, '') !== 'Save cancelled') {
+      if (liveIdRef.current === documentId && errorMessage(error_, '') !== 'Save cancelled') {
         setMessage(errorMessage(error_, 'Unable to save Mermaid file.'))
       }
     }
@@ -327,7 +328,7 @@ export function useMermaidDocument({
         refreshRecents()
         refreshProjectFiles()
       } catch (error_) {
-        setMessage(errorMessage(error_, 'Unable to rename file.'))
+        if (liveIdRef.current === documentId) setMessage(errorMessage(error_, 'Unable to rename file.'))
         throw error_
       }
     },

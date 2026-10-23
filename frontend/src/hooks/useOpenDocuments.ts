@@ -71,7 +71,7 @@ export const OPEN_DOCUMENTS_KEY = 'excalibur.openDocuments'
 
 let nextDocumentId = 0
 
-/** Tab label: the file's own title, else its stem, else a placeholder. */
+/** Tab label: the project label, source title, file stem, or a placeholder. */
 export function documentDisplayName(document: OpenDocument) {
   return document.displayName?.trim() || document.title?.trim() || document.name.trim() || 'Untitled'
 }
